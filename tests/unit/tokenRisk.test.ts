@@ -133,6 +133,94 @@ it('reports burned LP as a percentage reading, and an unread pool as unavailable
   expect(unread.cardReadings.filter(r => ['Liquidity', 'Top holders', 'Mint authority', 'Freeze authority', 'Pool age'].includes(r.label))).toHaveLength(5);
 });
 
+/** Queues for one Raydium pool whose LP is held in the given token accounts. */
+async function queueLpPool(holders: { account: string; amount: string; owner: string; ownerAccount: unknown }[]) {
+  const { SOLANA_MAINNET_GENESIS } = await import('@xbam/upstream');
+  const pool = 'Pool111111111111111111111111111111111111111';
+  const lpBytes = Buffer.alloc(32);
+  lpBytes[0] = 9;
+  lpBytes[31] = 1;
+  const poolData = Buffer.alloc(496);
+  poolData.set(lpBytes, 464);
+  const repeat = (value: unknown) => new Proxy([value], { get: (target, prop) => prop === 'shift' ? () => value : Reflect.get(target, prop) });
+  rpcQueue = {
+    getGenesisHash: repeat(SOLANA_MAINNET_GENESIS),
+    getAccountInfo: [{ context: { slot: 1 }, value: { owner: '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8', executable: false, data: [poolData.toString('base64'), 'base64'] } }],
+    getTokenSupply: [{ context: { slot: 1 }, value: { amount: '1000', decimals: 6 } }],
+    getTokenLargestAccounts: [{ context: { slot: 1 }, value: holders.map(h => ({ address: h.account, amount: h.amount })) }],
+    getMultipleAccounts: [
+      { context: { slot: 1 }, value: holders.map(h => ({ data: { parsed: { info: { owner: h.owner } } } })) },
+      { context: { slot: 1 }, value: holders.map(h => h.ownerAccount) },
+    ],
+  };
+  responses['dexscreener.com'] = {
+    status: 200,
+    body: JSON.stringify({ pairs: [{ chainId: 'solana', pairAddress: pool, baseToken: { address: SOL_MINT }, quoteToken: { address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' }, liquidity: { usd: 1000 } }] }),
+  };
+  responses['jup.ag'] = {
+    status: 200,
+    body: JSON.stringify([{ id: SOL_MINT, liquidity: 1000, updatedAt: new Date().toISOString(), firstPool: { createdAt: new Date().toISOString() }, audit: { topHoldersPercentage: 10, mintAuthorityDisabled: true, freezeAuthorityDisabled: true } }]),
+  };
+}
+
+it('does not count LP in a Streamflow escrow token account as locked when its owner PDA has no account', async () => {
+  // Real layout: the LP sits in the escrow token account, whose SPL owner is a PDA
+  // derived from ["strm", metadata] and which has no account of its own. The metadata
+  // account that holds end_time is not reachable from it, so a lock is not proved.
+  const { registerSolanaUpstreams, registerMarketUpstreams } = await import('@xbam/upstream');
+  const { resetLpCacheForTest } = await import('../../packages/runtime/src/lpLock');
+  resetLpCacheForTest();
+  registerSolanaUpstreams();
+  registerMarketUpstreams();
+  const escrowOwner = 'EscrowPda1111111111111111111111111111111111';
+  await queueLpPool([
+    { account: 'BurnAcct11111111111111111111111111111111111', amount: '700', owner: '1nc1nerator11111111111111111111111111111111',
+      ownerAccount: { owner: '11111111111111111111111111111111', executable: false, data: ['', 'base64'] } },
+    { account: 'EscrowTok1111111111111111111111111111111111', amount: '300', owner: escrowOwner, ownerAccount: null },
+  ]);
+  const capability = getCapability('token.inspect_risk')!;
+  const answer = await capability.run(capability.input.parse({ chain: 'solana', address: SOL_MINT }) as never, context()) as RiskAnswer & { lp: { heldByContract: string[] } };
+  expect(answer.cardReadings.find(r => r.label === 'LP burned')?.value).toBe(70);
+  expect(answer.cardReadings.find(r => r.label === 'LP locked')?.value).toBe(0);
+  expect(answer.lp?.heldByContract).toEqual([escrowOwner]);
+});
+
+it('retries a failed LP read after thirty seconds but keeps a good one for five minutes', async () => {
+  const { registerSolanaUpstreams, registerMarketUpstreams } = await import('@xbam/upstream');
+  const { resetLpCacheForTest, LP_UNAVAILABLE_CACHE_MS, LP_CACHE_MS } = await import('../../packages/runtime/src/lpLock');
+  resetLpCacheForTest();
+  registerSolanaUpstreams();
+  registerMarketUpstreams();
+  const capability = getCapability('token.inspect_risk')!;
+  const run = () => capability.run(capability.input.parse({ chain: 'solana', address: SOL_MINT }) as never, context()) as Promise<RiskAnswer>;
+  const start = Date.now();
+  const clock = vi.spyOn(Date, 'now');
+  try {
+    clock.mockReturnValue(start);
+    // No pool is indexed yet: unavailable.
+    const { SOLANA_MAINNET_GENESIS } = await import('@xbam/upstream');
+    rpcQueue = { getGenesisHash: new Proxy([SOLANA_MAINNET_GENESIS], { get: (t, p) => p === 'shift' ? () => SOLANA_MAINNET_GENESIS : Reflect.get(t, p) }) };
+    expect((await run()).lp?.unavailable).toBe(true);
+
+    // Inside the short window the failure is served from cache even though a good read is now possible.
+    await queueLpPool([{ account: 'BurnAcct11111111111111111111111111111111111', amount: '1000', owner: '1nc1nerator11111111111111111111111111111111',
+      ownerAccount: { owner: '11111111111111111111111111111111', executable: false, data: ['', 'base64'] } }]);
+    clock.mockReturnValue(start + LP_UNAVAILABLE_CACHE_MS - 1_000);
+    expect((await run()).lp?.unavailable).toBe(true);
+
+    // Past it, the read is made again and succeeds.
+    clock.mockReturnValue(start + LP_UNAVAILABLE_CACHE_MS + 1_000);
+    expect((await run()).lp?.unavailable).toBe(false);
+
+    // A success is not re-read inside five minutes.
+    rpcQueue = {};
+    clock.mockReturnValue(start + LP_UNAVAILABLE_CACHE_MS + LP_CACHE_MS - 1_000);
+    expect((await run()).lp?.unavailable).toBe(false);
+  } finally {
+    clock.mockRestore();
+  }
+});
+
 it('does not treat EVM mintability as proof of a disabled mint authority', async () => {
   responses = { token_security: security({ is_mintable: '0' }) };
   const answer = await inspect();

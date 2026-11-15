@@ -7,7 +7,9 @@ import {
   classifyLpHolders,
   lpContractLines,
   lpMintFromPool,
+  sameLp,
   streamEndFrom,
+  type LpStatus,
 } from '../../packages/runtime/src/lpLock';
 
 const RAYDIUM = '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8';
@@ -41,8 +43,9 @@ describe('the LP mint on a pool account', () => {
 
 describe('burned and locked shares', () => {
   const supply = 1_000n;
-  const row = (amount: bigint, owner: string, extra: Partial<{ ownerProgram: string | null; executable: boolean | null; streamEnd: bigint | null }> = {}) => ({
+  const row = (amount: bigint, owner: string, extra: Partial<{ ownerProgram: string | null; executable: boolean | null; streamEnd: bigint | null; missingAccount: boolean }> = {}) => ({
     amount, owner, ownerProgram: extra.ownerProgram ?? SYSTEM, executable: extra.executable ?? false, streamEnd: extra.streamEnd ?? null,
+    missingAccount: extra.missingAccount ?? false,
   });
 
   it('counts only a burn address and a Streamflow account whose end time is still ahead', () => {
@@ -75,7 +78,48 @@ describe('burned and locked shares', () => {
 
   it('is unavailable, never zero, when a holder or the supply was not read', () => {
     expect(classifyLpHolders(null, [row(1n, SYSTEM)])).toBeNull();
-    expect(classifyLpHolders(supply, [{ amount: 1n, owner: null, ownerProgram: null, executable: null, streamEnd: null }])).toBeNull();
+    expect(classifyLpHolders(supply, [{ amount: 1n, owner: null, ownerProgram: null, executable: null, streamEnd: null, missingAccount: false }])).toBeNull();
+  });
+
+  it('is unavailable, not 0% and 0%, when no holder rows were left to classify', () => {
+    expect(classifyLpHolders(supply, [])).toBeNull();
+  });
+
+  it('reports a Streamflow escrow owner with no account as held by a contract, never as locked', () => {
+    // The LP sits in the escrow token account. Its owner is a PDA with no
+    // account, and the stream metadata that holds end_time cannot be derived
+    // back from it, so a lock is not proved.
+    const escrow = 'EscrowPda1111111111111111111111111111111111';
+    const status = classifyLpHolders(supply, [
+      row(600n, escrow, { ownerProgram: null, missingAccount: true }),
+      row(400n, INCINERATOR),
+    ]);
+    expect(status?.lockedPct).toBe(0);
+    expect(status?.unlockAt).toBeNull();
+    expect(status?.burnedPct).toBe(40);
+    expect(status?.heldByContract).toEqual([escrow]);
+  });
+
+  it('reads end_time from a stream metadata account laid out as the Streamflow SDK describes it', () => {
+    // js-sdk streamLayout: magic u8[8], version u8, created_at u64, withdrawn_amount u64,
+    // canceled_at u64, end_time u64 (byte 33), then the rest of the account.
+    const end = BigInt(Math.floor(Date.now() / 1000) + 7 * 86_400);
+    const metadata = new Uint8Array(1_104);
+    metadata.set([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08], 0);
+    metadata[8] = 1;
+    const put = (offset: number, value: bigint) => {
+      for (let i = 0; i < 8; i += 1) metadata[offset + i] = Number((value >> BigInt(8 * i)) & 0xffn);
+    };
+    put(9, end - 86_400n);
+    put(17, 0n);
+    put(25, 0n);
+    put(STREAMFLOW_END_OFFSET, end);
+    const parsed = streamEndFrom(metadata);
+    expect(STREAMFLOW_END_OFFSET).toBe(33);
+    expect(parsed).toBe(end);
+    const status = classifyLpHolders(supply, [row(500n, 'StreamAcct111111111111111111111111111111111', { ownerProgram: STREAMFLOW_PROGRAM, streamEnd: parsed })]);
+    expect(status?.lockedPct).toBe(50);
+    expect(status?.unlockAt).toBe(new Date(Number(end) * 1000).toISOString());
   });
 
   it('reads a Streamflow end only at the published offset', () => {
@@ -88,6 +132,26 @@ describe('burned and locked shares', () => {
     }
     expect(streamEndFrom(data)).toBe(end);
     expect(streamEndFrom(data.subarray(0, STREAMFLOW_END_OFFSET + 4))).toBeNull();
+  });
+});
+
+describe('comparing LP reads at send time', () => {
+  const status = (heldByContract: string[]): LpStatus => ({
+    burnedPct: 10, lockedPct: 0, unlockAt: null, source: 'solana_lp', heldByContract, unavailable: false,
+  });
+
+  it('does not call a length-trimmed card changed when its contract lines are not in the text', () => {
+    const trimmed = 'LP burned: 10 %\nLP locked: 0 %';
+    // The stored card dropped lp; the send-time re-read still finds a contract.
+    expect(sameLp(status([`${CUSTOM}`]), null, trimmed)).toBe(true);
+    expect(sameLp(status([]), null, trimmed)).toBe(true);
+  });
+
+  it('still calls a card changed when a contract line it shows differs', () => {
+    const shown = `LP burned: 10 %\nheld by contract ${CUSTOM}`;
+    expect(sameLp(status([CUSTOM]), status([CUSTOM]), shown)).toBe(true);
+    expect(sameLp(status([CUSTOM]), status([]), shown)).toBe(false);
+    expect(sameLp(status([CUSTOM]), null, shown)).toBe(false);
   });
 });
 

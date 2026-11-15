@@ -20,6 +20,10 @@ import { base58 } from './solanaInspect';
 
 /** Matches the five-minute freshness already used for the other card readings. */
 export const LP_CACHE_MS = 5 * 60_000;
+/** A failed read is retried soon. A success keeps the five-minute freshness. */
+export const LP_UNAVAILABLE_CACHE_MS = 30_000;
+/** One JSON-RPC call. The capability's own deadline is the sum, not this. */
+export const LP_RPC_TIMEOUT_MS = 8_000;
 
 /**
  * `getTokenLargestAccounts` can return twenty. Ten is the card's ceiling, so a
@@ -79,9 +83,25 @@ export const SOLANA_BURN_ADDRESSES = [
 const SYSTEM_PROGRAM = '11111111111111111111111111111111';
 
 /**
- * Streamflow's stream program. `end_time` is the u64 at byte 33 of a stream
- * account (their `streamLayout`). A balance there counts as locked only when
- * that field is a unix second still in the future.
+ * Streamflow's stream program. `end_time` is the u64 at byte 33 of the stream
+ * *metadata* account (js-sdk `packages/stream/solana/layout.ts` `streamLayout`:
+ * magic 8, version 1, then `created_at`, `withdrawn_amount`, `canceled_at`,
+ * `end_time`). A balance counts as locked only when that field is still ahead.
+ *
+ * The LP does not sit in that metadata account. Create derives
+ * `findProgramAddressSync([Buffer.from("strm"), metadata], programId)` and
+ * that address *is* the token account (`deriveEscrowPDA` in
+ * `packages/stream/solana/lib/derive-accounts.ts`, `ESCROW_SEED` `"strm"` in
+ * `constants.ts`, passed as `escrowTokens` in `StreamClient.ts` around the
+ * create path). Its SPL owner is that PDA, and the PDA has no account, so
+ * reading the owner as if it were metadata never sees `end_time`.
+ *
+ * The PDA is `sha256("strm" || metadata || bump || program || "ProgramDerivedAddress")`.
+ * That hash is not reversible, and `getProgramAccounts` (the scan that could
+ * match `escrow_tokens` at byte 209 of `streamLayout`) is not an allowed read.
+ * An owner with no account is therefore reported as held by that contract and
+ * is never counted as locked. Locked still requires the owner account itself
+ * to be stream metadata whose `end_time` is still ahead.
  */
 export const STREAMFLOW_PROGRAM = 'strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m';
 export const STREAMFLOW_END_OFFSET = 33;
@@ -110,11 +130,13 @@ interface HolderRow {
   owner: string | null;
   ownerProgram: string | null;
   executable: boolean | null;
-  /** Stream end, unix seconds, when this owner is a stream account we could read. */
+  /** Stream end, unix seconds, when this owner is a stream metadata account we could read. */
   streamEnd: bigint | null;
+  /** The owner address has no account. A Streamflow escrow PDA looks like this. */
+  missingAccount: boolean;
 }
 
-const cache = new Map<string, { at: number; value: LpForCard }>();
+const cache = new Map<string, { at: number; ttl: number; value: LpForCard }>();
 
 export function resetLpCacheForTest(): void {
   cache.clear();
@@ -175,6 +197,8 @@ export function streamEndFrom(data: Uint8Array): bigint | null {
  */
 export function classifyLpHolders(supply: bigint | null, holders: HolderRow[], nowMs = Date.now()): Pick<LpStatus, 'burnedPct' | 'lockedPct' | 'unlockAt' | 'heldByContract'> | null {
   if (supply === null || supply <= 0n) return null;
+  // No rows left means the holder list was not read. That is not 0% burned and 0% locked.
+  if (holders.length === 0) return null;
   if (holders.some(row => row.owner === null || row.amount < 0n)) return null;
   const burn = new Set<string>(SOLANA_BURN_ADDRESSES);
   let burned = 0n;
@@ -186,6 +210,12 @@ export function classifyLpHolders(supply: bigint | null, holders: HolderRow[], n
     const owner = row.owner!;
     if (burn.has(owner)) {
       burned += row.amount;
+      continue;
+    }
+    // The escrow PDA has no account. It holds the tokens and is not a proved lock:
+    // its metadata cannot be derived back from the PDA (see STREAMFLOW_PROGRAM).
+    if (row.missingAccount) {
+      if (!held.includes(owner)) held.push(owner);
       continue;
     }
     // A stream account whose end time was not in the bytes is an unread lock, not an open balance.
@@ -230,7 +260,9 @@ function decodeData(data: unknown): Uint8Array | null {
 }
 
 async function solana(method: SolanaQuery['method'], params: unknown[]): Promise<unknown> {
-  const answer = await ask<SolanaQuery, SolanaResult>(SOLANA_FAMILY, { method, params, commitment: 'finalized' });
+  const answer = await ask<SolanaQuery, SolanaResult>(SOLANA_FAMILY, { method, params, commitment: 'finalized' }, {
+    signal: AbortSignal.timeout(LP_RPC_TIMEOUT_MS),
+  });
   return valueOf(answer.value.result);
 }
 
@@ -303,6 +335,7 @@ async function holderRows(lpMint: string): Promise<{ supply: bigint | null; hold
     const amount = row.amount;
     return typeof row.address === 'string' && (typeof amount === 'string' || typeof amount === 'number') && String(amount) !== '0';
   });
+  if (top.length === 0) return null;
   const accounts = top.map(row => row.address as string);
   const owners = new Map<string, string | null>();
   if (accounts.length > 0) {
@@ -311,14 +344,17 @@ async function holderRows(lpMint: string): Promise<{ supply: bigint | null; hold
     accounts.forEach((account, i) => owners.set(account, ownerOfTokenAccount(read[i])));
   }
   const distinct = [...new Set([...owners.values()].filter((owner): owner is string => owner !== null))];
-  const programs = new Map<string, { ownerProgram: string | null; executable: boolean | null; data: Uint8Array | null }>();
+  const programs = new Map<string, { ownerProgram: string | null; executable: boolean | null; data: Uint8Array | null; missingAccount: boolean }>();
   if (distinct.length > 0) {
     const read = await solana('getMultipleAccounts', [distinct, { encoding: 'base64', commitment: 'finalized' }]);
     if (!Array.isArray(read)) return null;
     distinct.forEach((owner, i) => {
       const row = read[i];
       if (row === null) {
-        programs.set(owner, { ownerProgram: SYSTEM_PROGRAM, executable: false, data: null });
+        // No account at the owner. A Streamflow escrow PDA looks exactly like
+        // this: the tokens' authority, with the metadata account elsewhere.
+        // Classifying it as the System program would hide the holding.
+        programs.set(owner, { ownerProgram: null, executable: false, data: null, missingAccount: true });
         return;
       }
       const info = asRecord(row);
@@ -326,6 +362,7 @@ async function holderRows(lpMint: string): Promise<{ supply: bigint | null; hold
         ownerProgram: typeof info.owner === 'string' ? info.owner : null,
         executable: typeof info.executable === 'boolean' ? info.executable : null,
         data: decodeData(info.data),
+        missingAccount: false,
       });
     });
   }
@@ -340,6 +377,7 @@ async function holderRows(lpMint: string): Promise<{ supply: bigint | null; hold
       ownerProgram: program?.ownerProgram ?? null,
       executable: program?.executable ?? null,
       streamEnd,
+      missingAccount: program?.missingAccount ?? false,
     };
   });
   return { supply: BigInt(supplyText), holders };
@@ -366,6 +404,18 @@ export function lpContractLines(lp: LpStatus | null | undefined): string[] {
   return lp.heldByContract.map(address => `held by contract ${address}`);
 }
 
+/**
+ * Whether two LP reads agree on the lines this card text still shows.
+ * Percentages and the unlock time are readings, compared with those. A length
+ * trim drops `lp` and its contract lines, so a fresh read must not look like
+ * a different card when those lines are absent from the text.
+ */
+export function sameLp(left: LpStatus | null, right: LpStatus | null, cardText: string): boolean {
+  const lines = cardText.split('\n');
+  const shown = (status: LpStatus | null) => lpContractLines(status).filter(line => lines.includes(line));
+  return JSON.stringify(shown(left)) === JSON.stringify(shown(right));
+}
+
 async function solanaLp(mint: string, poolAddress: string | null): Promise<LpForCard> {
   const resolved = await resolveLpMint(mint, poolAddress);
   if (!resolved) return unavailable('solana_lp');
@@ -390,10 +440,10 @@ async function solanaLp(mint: string, poolAddress: string | null): Promise<LpFor
 export async function readLpForCard(input: { chain: string; address: string; poolAddress: string | null }): Promise<LpForCard> {
   const key = `${input.chain}:${input.address}`;
   const hit = cache.get(key);
-  if (hit && Date.now() - hit.at <= LP_CACHE_MS) return hit.value;
+  if (hit && Date.now() - hit.at <= hit.ttl) return hit.value;
   const value = input.chain === 'solana'
     ? await solanaLp(input.address, input.poolAddress).catch(() => unavailable('solana_lp'))
     : unavailable('evm_lp');
-  cache.set(key, { at: Date.now(), value });
+  cache.set(key, { at: Date.now(), ttl: value.lp.unavailable ? LP_UNAVAILABLE_CACHE_MS : LP_CACHE_MS, value });
   return value;
 }

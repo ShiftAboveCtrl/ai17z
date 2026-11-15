@@ -66,11 +66,15 @@ export type EvidenceCardImageRequest = z.infer<typeof EvidenceCardImageRequest>;
 /** Pure: the frozen payload for one card, or null when the card is not one Studio can draw. */
 export function evidenceCardImagePayload(input: { chain: string; address: string; readings: CardReading[]; now?: Date }): EvidenceCardImageRequest | null {
   const address = input.address.startsWith('0x') ? input.address.toLowerCase() : input.address;
+  // Protocol 1 draws the original five labels. LP lines stay on the text card
+  // and are left out here, so a later label never fails the picture.
+  const cardFields = new Set<string>(CARD_FIELD_LABELS);
+  const readings = input.readings.filter(r => cardFields.has(r.label)).slice(0, CARD_FIELD_LABELS.length);
   const parsed = EvidenceCardImageRequest.safeParse({
     protocol: 1,
     chain: input.chain,
     address,
-    readings: input.readings.map(r => ({
+    readings: readings.map(r => ({
       label: r.label, value: r.value, unit: r.unit, source: r.source,
       fetched_at: r.fetchedAt, observed_at: r.observedAt, max_age_ms: r.maxAgeMs,
     })),

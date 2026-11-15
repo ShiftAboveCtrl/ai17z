@@ -4,7 +4,7 @@ import { PolicyConfig } from '@xbam/shared/contracts';
 import { getCapability, invokeCapability, resolvePermission } from '@xbam/tools';
 import { CHECK_LINK_PREFIX, COMPARE_LINK_PREFIXES, renderEvidenceCard, renderEvidenceCompare, shortAddress, type CardReading } from '@xbam/prompts';
 import { capabilitySettings } from './capabilityPermissions';
-import { lpContractLines, type LpStatus } from './lpLock';
+import { lpContractLines, sameLp, type LpStatus } from './lpLock';
 import { checkLinkUrl, linkedCheckOrigin, studioCheckLink } from './studioCheckLink';
 import { pauseState } from './killSwitch';
 import { evidenceCardRequest, evidenceCompareRequest } from './research';
@@ -312,11 +312,6 @@ function sameReadings(left: CardReading[], right: CardReading[]): boolean {
   });
 }
 
-function sameLp(left: LpStatus | null, right: LpStatus | null): boolean {
-  return JSON.stringify(left?.heldByContract ?? []) === JSON.stringify(right?.heldByContract ?? [])
-    && left?.unlockAt === right?.unlockAt && Object.is(left?.burnedPct, right?.burnedPct) && Object.is(left?.lockedPct, right?.lockedPct);
-}
-
 function readingsExpired(readings: CardReading[], now = Date.now()): boolean {
   return readings.some(reading => {
     const fetched = Date.parse(reading.fetchedAt ?? '');
@@ -421,7 +416,7 @@ export async function checkEvidenceCardAtSend(bundle: JobBundle, output: string)
     const fresh = await rereadEvidenceCard(bundle, card);
     // A new read carries a new fetch time, so the rendered lines never match
     // character for character. The same readings are the card the owner saw.
-    if (fresh && sameReadings(fresh.readings, card.readings) && sameLp(fresh.lp, card.lp ?? null)) return;
+    if (fresh && sameReadings(fresh.readings, card.readings) && sameLp(fresh.lp, card.lp ?? null, card.text)) return;
     throw PipelineError.review('evidence_card_changed', fresh ? READINGS_CHANGED
       : 'The complete sourced evidence card changed or its readings expired. Generate a fresh card.');
   }

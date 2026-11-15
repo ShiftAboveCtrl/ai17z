@@ -243,8 +243,14 @@ const inspectRisk = defineCapability({
         { label: 'Pool age', value: null, unit: 'hours' },
         // Uniswap LP holder balances are not on the allowed node methods, so the line stays unread.
         { label: 'LP status', value: null, unit: '%' },
-      ].map(r => ({ ...r, unit: r.unit as CardReading['unit'], source: security?.provenance.upstreamId ?? 'token_security.goplus',
-        fetchedAt: security?.provenance.fetchedAt ?? null, observedAt: security?.provenance.fetchedAt ?? null, maxAgeMs: 60 * 60_000 })),
+      ].map(r => ({
+        ...r, unit: r.unit as CardReading['unit'],
+        // The LP line was not a GoPlus read. Its source says so; the clock is the card's.
+        source: r.label === 'LP status' ? 'evm_lp' : security?.provenance.upstreamId ?? 'token_security.goplus',
+        fetchedAt: security?.provenance.fetchedAt ?? null,
+        observedAt: security?.provenance.fetchedAt ?? null,
+        maxAgeMs: 60 * 60_000,
+      })),
     };
   },
 });
