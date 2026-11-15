@@ -26,11 +26,12 @@ let rpcMethods: string[] = [];
 /** The mint account the mocked node returns, as base64, and its owner. Null is an account that does not exist. */
 let mintAccount: { owner: string; data: string } | null = null;
 const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
-const feeMint = (bps: number, delegateKey: string) => {
+const feeMint = (bps: number, delegateKey: string, scheduled?: { epoch: number; bps: number }) => {
   // A padded mint, the account type, then a transfer fee and a permanent delegate entry, as the program lays them out.
+  // The mocked node is at slot 469,812,667, which is epoch 1087, so a `scheduled` epoch above that has not begun.
   const fee = new Uint8Array(108); const view = new DataView(fee.buffer);
   view.setBigUint64(72, 0n, true); view.setBigUint64(80, 1_000_000n, true); view.setUint16(88, bps, true);
-  view.setBigUint64(90, 0n, true); view.setBigUint64(98, 1_000_000n, true); view.setUint16(106, bps, true);
+  view.setBigUint64(90, BigInt(scheduled?.epoch ?? 0), true); view.setBigUint64(98, 1_000_000n, true); view.setUint16(106, scheduled?.bps ?? bps, true);
   const key = new Uint8Array(32);
   let n = 0n; for (const ch of delegateKey) n = n * 58n + BigInt('123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'.indexOf(ch));
   for (let i = 31; i >= 0; i--) { key[i] = Number(n & 0xffn); n >>= 8n; }
@@ -230,7 +231,7 @@ it('a disabled capability and stranger watch text never read or create a watch',
 });
 
 /** The card as it stood when the owner saw it, with readings already past the five minute bound. */
-async function ageApprovedCard(jobId: string): Promise<string> {
+async function ageApprovedCard(jobId: string, opts: { dropExtensions?: boolean; extensionsLaterMs?: number } = {}): Promise<string> {
   const job = await jobs.requireJob(jobId);
   const context = job.resolvedContext as ResolvedContext & { meta: { evidenceCard: { text: string; readings: CardReading[]; cardJobId: string | null; deployer: DeployerHistory | null; extensions?: MintExtensions | null } } };
   const seenAt = Date.now() - 6 * 60_000;
@@ -239,9 +240,11 @@ async function ageApprovedCard(jobId: string): Promise<string> {
   const offer = context.meta.evidenceCard.text.split('\n').find(line => line.startsWith('Owner:')) ?? '';
   const before = context.meta.evidenceCard.deployer;
   const aged = before && { ...before, launchesFetchedAt: stamp, launchesObservedAt: stamp };
-  const extBefore = context.meta.evidenceCard.extensions ?? null;
-  const agedExt = extBefore && { ...extBefore, fetchedAt: stamp };
-  const text = renderEvidenceCard(readings, offer, seenAt, '', aged, agedExt);
+  const extBefore = opts.dropExtensions ? null : context.meta.evidenceCard.extensions ?? null;
+  // The mint read happens after the index reading, so it can carry a later time; the card was rendered once both existed.
+  const extLater = opts.extensionsLaterMs ?? 0;
+  const agedExt = extBefore && { ...extBefore, fetchedAt: new Date(seenAt + extLater).toISOString() };
+  const text = renderEvidenceCard(readings, offer, seenAt + extLater, '', aged, agedExt);
   const resolvedContext = { ...context, meta: { ...context.meta, evidenceCard: { ...context.meta.evidenceCard, text, readings, deployer: aged, extensions: agedExt } } };
   await jobs.updateJob(jobId, { resolvedContext: resolvedContext as ResolvedContext, generatedOutput: text, validatedOutput: text });
   return text;
@@ -397,7 +400,8 @@ it('adds the deployer read from the chain, with sources, and keeps every existin
   expect(out).toContain('Liquidity: 12000 USD');
   expect(out).toContain('not a verdict, reads can be wrong');
   expect(out).not.toMatch(/\b(?:rug|scam|serial|dev dumped|safe|avoid)\b/i);
-  expect(rpcMethods.filter(m => m !== 'getGenesisHash')).toEqual(['getSignaturesForAddress', 'getTransaction', 'getAccountInfo']);
+  // The mint read runs beside the deployer reads, so only the set of reads is fixed, not their order.
+  expect(rpcMethods.filter(m => m !== 'getGenesisHash').sort()).toEqual(['getAccountInfo', 'getSignaturesForAddress', 'getTransaction']);
   expect(await query('SELECT * FROM evidence_card_requests')).toHaveLength(1);
 });
 
@@ -479,6 +483,59 @@ it('holds an approved card for review when the fee changed since the owner looke
   const held = await jobs.requireJob(waiting.id);
   expect(held.status).not.toBe('EXECUTED');
   expect((await actions.listJobActions(waiting.id)).filter(a => !a.dryRun && a.status === 'EXECUTED')).toHaveLength(0);
+});
+
+it('shows a fee scheduled for a later epoch as its own line and never as the current fee', async () => {
+  chainRead = true;
+  mintAccount = { owner: TOKEN_2022, data: feeMint(100, DELEGATE, { epoch: 1100, bps: 9900 }) };
+  const out = (await ask(await fixture(), undefined, true)).validatedOutput!;
+  expect(out).toContain('transfer fee: 100 bps (1%)');
+  expect(out).toContain('transfer fee scheduled: 9900 bps (99%), cap 1000000 base units, from epoch 1100');
+  expect(out).not.toContain('transfer fee: 9900');
+});
+
+it('holds an approved card for review when a fee change was scheduled since the owner looked', async () => {
+  chainRead = true;
+  mintAccount = { owner: TOKEN_2022, data: feeMint(100, DELEGATE) };
+  const f = await fixture({ automation: { mode: 'REVIEW_BEFORE_ACTION', dryRunDefault: false } });
+  const waiting = await ask(f);
+  expect(waiting.status).toBe('WAITING_FOR_APPROVAL');
+  await ageApprovedCard(waiting.id);
+  // The fee in effect is unchanged; only a pending change appeared.
+  mintAccount = { owner: TOKEN_2022, data: feeMint(100, DELEGATE, { epoch: 1100, bps: 9900 }) };
+  (await import('@xbam/upstream')).resetCacheForTest();
+  await runtime.approveJob({ jobId: waiting.id, decidedBy: f.ownerId });
+  await drainJobs();
+  expect((await jobs.requireJob(waiting.id)).status).not.toBe('EXECUTED');
+  expect((await actions.listJobActions(waiting.id)).filter(a => !a.dryRun && a.status === 'EXECUTED')).toHaveLength(0);
+});
+
+it('does not hold an approved card that never carried extension lines because a fresh read now has some', async () => {
+  chainRead = true;
+  mintAccount = { owner: TOKEN_2022, data: feeMint(500, DELEGATE) };
+  const f = await fixture({ automation: { mode: 'REVIEW_BEFORE_ACTION', dryRunDefault: false } });
+  const waiting = await ask(f);
+  expect(waiting.status).toBe('WAITING_FOR_APPROVAL');
+  const approved = await ageApprovedCard(waiting.id, { dropExtensions: true });
+  expect(approved).not.toContain('Token-2022');
+  (await import('@xbam/upstream')).resetCacheForTest();
+  await runtime.approveJob({ jobId: waiting.id, decidedBy: f.ownerId });
+  await drainJobs();
+  expect((await jobs.requireJob(waiting.id)).status).toBe('EXECUTED');
+});
+
+it('still matches the stored card when the mint read came more than thirty seconds after the index reading', async () => {
+  chainRead = true;
+  mintAccount = { owner: TOKEN_2022, data: feeMint(500, DELEGATE) };
+  const f = await fixture({ automation: { mode: 'REVIEW_BEFORE_ACTION', dryRunDefault: false } });
+  const waiting = await ask(f);
+  expect(waiting.status).toBe('WAITING_FOR_APPROVAL');
+  const approved = await ageApprovedCard(waiting.id, { extensionsLaterMs: 90_000 });
+  expect(approved).toContain('transfer fee: 500 bps (5%)');
+  (await import('@xbam/upstream')).resetCacheForTest();
+  await runtime.approveJob({ jobId: waiting.id, decidedBy: f.ownerId });
+  await drainJobs();
+  expect((await jobs.requireJob(waiting.id)).status).toBe('EXECUTED');
 });
 
 it('leaves the Token-2022 lines off last, after the link and the deployer, rather than holding a card the length policy cannot fit', async () => {

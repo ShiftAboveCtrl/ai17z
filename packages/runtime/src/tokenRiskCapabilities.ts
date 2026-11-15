@@ -163,13 +163,17 @@ const inspectRisk = defineCapability({
         { label: 'Freeze authority', value: token?.freezeAuthorityDisabled ?? null, unit: 'authority' },
         { label: 'Pool age', value: Number.isFinite(poolTime) && poolTime <= Date.now() ? Math.floor((Date.now() - poolTime) / 3600_000) : null, unit: 'hours' },
       ].map(r => ({ ...r, source, fetchedAt, observedAt, maxAgeMs: 5 * 60_000 })) as CardReading[];
-      // Two more reads of the same mint (its oldest signature and that transaction), kept
-      // inside this one invocation so the card's reservation and caps already cover them.
-      const deployer = await readDeployerHistory(input.address, { developer: token?.developer ?? null,
-        developerLaunches: token?.developerLaunches ?? null, source, fetchedAt, observedAt });
-      // One more read of the mint account itself, for its Token-2022 extensions. It is not a card
-      // reading: the Studio picture is frozen at five labels, so the lines travel beside the readings.
-      const extensions = await readMintExtensions(input.address);
+      // Reads of the same mint kept inside this one invocation, so the card's reservation and caps
+      // already cover them: its oldest signature and that transaction (the deployer), and the mint
+      // account itself for its Token-2022 extensions. They are independent, so they run together and
+      // the card waits for the slower, not the sum; the extension read also has its own deadline.
+      // The extensions are not a card reading: the Studio picture is frozen at five labels, so the
+      // lines travel beside the readings.
+      const [deployer, extensions] = await Promise.all([
+        readDeployerHistory(input.address, { developer: token?.developer ?? null,
+          developerLaunches: token?.developerLaunches ?? null, source, fetchedAt, observedAt }),
+        readMintExtensions(input.address),
+      ]);
       return { chain: 'solana', chainId: null, address: input.address, observations: [], notChecked: [],
         limitations: ['Index readings can be wrong; holder accounts are not attributed ownership.'],
         sourcesAnswering: token ? 1 : 0, cardReadings, deployer, extensions };

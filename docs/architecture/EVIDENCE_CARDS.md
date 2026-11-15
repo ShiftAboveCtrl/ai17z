@@ -70,22 +70,37 @@ The lines are `transfer fee: 500 bps (5%)` (with the cap in base units),
 A fee extension present at zero reads `0 bps (0%)`; none reads `transfer fee:
 none`; the original Token program reads `Token-2022: not applicable (SPL
 Token)`. The fee shown is the one in effect at the slot the account was read,
-chosen from the two scheduled entries by epoch. Type ids this does not decode
-are listed as `additional unparsed extensions present`, never skipped quietly.
+chosen from the two scheduled entries by epoch. A change set for a later epoch
+is never shown as the current fee: it is its own line, `transfer fee scheduled:
+9900 bps (99%), cap 5000 base units, from epoch 700`, printed only while that
+epoch has not begun and the scheduled entry differs from the one in effect. Type
+ids this does not decode are listed as `additional unparsed extensions present`,
+never skipped quietly. DefaultAccountState is extension id 6 (id 2 is
+TransferFeeAmount, which lives on token accounts and never on a mint).
 
 **Absent is never zero.** Any failed fetch, wrong owner, short or padded-wrong
-buffer, or known extension of the wrong size is one line, `Token-2022:
+buffer, a buffer cut inside an entry header (one to three stray trailing bytes),
+an uninitialised entry carrying a length or followed by anything but zeros, or
+known extension of the wrong size is one line, `Token-2022:
 extensions unread`, with no number in it. A reading older than five minutes
 prints the same line. These lines are not `CardReading`s: Studio's card picture
 (`studioEvidenceCardImage.ts`) is frozen at five labels and is untouched. Studio's
-check page takes the separate answer in `studioTokenExtensions.ts`
-(`GET /api/v1/installation/token-extensions`), pinned by
-`tests/fixtures/studioTokenExtensions.json`.
+check page is meant to take the separate answer shaped in
+`studioTokenExtensions.ts` (`GET /api/v1/installation/token-extensions`), pinned
+by `tests/fixtures/studioTokenExtensions.json`. **Nothing serves or sends it
+yet.** It is a schema, a pure builder and a fixture only: no route on this
+installation answers that path and no sender pushes it to Studio. Whether Studio
+fetches it or the installation pushes it is for the Studio lane to decide, and
+it carries the fee in effect only, not the scheduled change.
 
 The lines are runtime-built, so the address rule exempts exactly those lines at
 generation and at approval (a delegate or hook is an address), and the send
-check re-reads the mint and sends to review if the fee, delegate or hook changed
-since the owner looked. When a card would overrun the length policy these lines
+check re-reads the mint and sends to review if the fee, a scheduled fee,
+delegate or hook changed since the owner looked. A card that never carried the
+section (the lines were dropped for length, or it is not a Solana card) has no
+claim for a re-read to contradict and is not held for it. The mint read runs
+beside the deployer reads, with a deadline of its own, so a slow node costs the
+section ("extensions unread") and not the card. When a card would overrun the length policy these lines
 are dropped last, after the link and the deployer lines. They cost one RPC read
 inside the same reservation as the rest of the card and spend no X read.
 

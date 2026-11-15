@@ -439,12 +439,21 @@ function sameReadings(left: CardReading[], right: CardReading[]): boolean {
   });
 }
 
-/** The fee and hook a mint carries are a reading and must be the ones the owner saw. Fetch times always move. */
-function sameExtensions(left: MintExtensions | null, right: MintExtensions | null): boolean {
-  if (!left || !right) return left === right;
+/**
+ * The fee and hook a mint carries are a reading and must be the ones the owner saw. Fetch times always move.
+ *
+ * `fresh` is the re-read at send time, `approved` what the owner saw. A card with no extension
+ * section (made before this section existed, an EVM token, or the lines dropped for length)
+ * shows the owner no claim about extensions, so there is nothing for a fresh read to contradict
+ * and it is not a reason to hold the card. Once the card did carry the section, any difference is.
+ */
+function sameExtensions(fresh: MintExtensions | null, approved: MintExtensions | null): boolean {
+  if (!approved) return true;
+  if (!fresh) return false;
   // Key order is not part of the reading: a card stored as jsonb comes back with its keys reordered.
-  const bare = (ext: MintExtensions) => JSON.stringify(Object.entries({ ...ext, fetchedAt: null }).sort(([a], [b]) => (a < b ? -1 : 1)));
-  return bare(left) === bare(right);
+  // No scheduled fee and a null one are the same reading.
+  const bare = (ext: MintExtensions) => JSON.stringify(Object.entries({ scheduledTransferFee: null, ...ext, fetchedAt: null }).sort(([a], [b]) => (a < b ? -1 : 1)));
+  return bare(fresh) === bare(approved);
 }
 
 /** The creator never changes; the launch count is a reading and must be the one the owner saw. */
@@ -473,7 +482,12 @@ function textMatchesReadings(text: string, readings: CardReading[], offer: strin
   // The launch count comes from the same index record as the readings, so their fetch time is the card's.
   const fetched = readings.map(reading => Date.parse(reading.fetchedAt ?? '')).filter(time => Number.isFinite(time));
   const asOf = fetched.length ? Math.max(...fetched) : Date.now();
-  return `${echo ? `${echo}\n` : ''}${renderEvidenceCard(readings, offer, asOf, link, deployer, extensions)}` === text;
+  // The mint read happens after the index reading, in the same invocation, and a slow deployer read can
+  // put more than the render's thirty seconds of tolerance between them. The card was rendered when both
+  // existed, so the extension lines are also tried at their own read time.
+  const extensionTime = Date.parse(extensions?.fetchedAt ?? '');
+  const times = Number.isFinite(extensionTime) && extensionTime > asOf ? [asOf, extensionTime] : [asOf];
+  return times.some(at => `${echo ? `${echo}\n` : ''}${renderEvidenceCard(readings, offer, at, link, deployer, extensions)}` === text);
 }
 
 /** The same inspect path a first card uses: permission, research budget, asker cap, mint cooldown, then the capability. */

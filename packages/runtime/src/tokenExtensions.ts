@@ -116,11 +116,18 @@ export function parseToken2022Mint(data: Uint8Array): ParsedMint | null {
   const out: ParsedMint = { ...empty, otherTypeIds: [] };
   const seen = new Set<number>();
   let at = TLV_START;
-  while (at + 4 <= data.length) {
+  while (at < data.length) {
+    // One to three bytes cannot hold an entry header. They mean the buffer was cut inside one,
+    // so an extension may be missing from what was decoded: never a valid read.
+    if (at + 4 > data.length) return null;
     const type = view.getUint16(at, true);
     const length = view.getUint16(at + 2, true);
-    // Zeroed space after the last entry is an uninitialised entry of length zero.
-    if (type === 0 && length === 0) break;
+    if (type === 0) {
+      // Type zero is Uninitialized. Only zeroed padding may follow the last real entry: a length
+      // on it, or anything nonzero after it, is not a layout this decoder can vouch for.
+      if (length !== 0 || !data.subarray(at).every((b) => b === 0)) return null;
+      break;
+    }
     const start = at + 4;
     const end = start + length;
     if (end > data.length || seen.has(type)) return null;
@@ -162,6 +169,18 @@ export function feeInEffect(fees: { older: TransferFeeEntry; newer: TransferFeeE
   return { bps: entry.bps, maxFee: entry.maxFee.toString() };
 }
 
+/**
+ * A fee change that has been set but has not begun. Shown beside the fee in effect,
+ * never instead of it and never as it: the newer entry applies only from its epoch.
+ * Null when nothing is scheduled, or when the scheduled entry changes nothing.
+ */
+export function feeScheduled(fees: { older: TransferFeeEntry; newer: TransferFeeEntry }, slot: number): { bps: number; maxFee: string; epoch: string } | null {
+  const epoch = BigInt(Math.floor(slot / SLOTS_PER_EPOCH));
+  if (fees.newer.epoch <= epoch) return null;
+  if (fees.newer.bps === fees.older.bps && fees.newer.maxFee === fees.older.maxFee) return null;
+  return { bps: fees.newer.bps, maxFee: fees.newer.maxFee.toString(), epoch: fees.newer.epoch.toString() };
+}
+
 const Common = { source: z.string(), fetchedAt: z.string().nullable(), maxAgeMs: z.number() };
 
 /** The capability output shape of a `MintExtensions`, so the card and the capability cannot drift apart. */
@@ -171,6 +190,8 @@ export const MintExtensionsOut = z.discriminatedUnion('status', [
   z.object({
     status: z.literal('read'), ...Common,
     transferFee: z.object({ bps: z.number().int().min(0).max(65535), maxFee: z.string() }).nullable(),
+    /** A fee change set for a later epoch. Absent or null when none is pending. */
+    scheduledTransferFee: z.object({ bps: z.number().int().min(0).max(65535), maxFee: z.string(), epoch: z.string().regex(/^\d{1,20}$/) }).nullable().optional(),
     permanentDelegate: z.string().nullable(),
     transferHookProgram: z.string().nullable(),
     defaultAccountState: z.enum(['initialized', 'frozen']).nullable(),
@@ -183,10 +204,30 @@ function unread(source: string, fetchedAt: string | null): MintExtensions {
 }
 
 /**
+ * Its own bound. The read runs beside the deployer reads inside `token.inspect_risk`'s
+ * one timeout, and a slow node must cost this section ("extensions unread") rather
+ * than the whole card. Two sequential deployer reads are longer than this one read,
+ * so inside this bound the card takes no longer than it did before the section existed.
+ */
+export const EXTENSIONS_DEADLINE_MS = 12_000;
+
+/**
  * The extension reading for one mint. Never throws: any failed read is `unread`,
  * which the card prints as such, so a fee is never invented by a failure.
  */
-export async function readMintExtensions(mint: string): Promise<MintExtensions> {
+export async function readMintExtensions(mint: string, deadlineMs = EXTENSIONS_DEADLINE_MS): Promise<MintExtensions> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<MintExtensions>((resolve) => {
+    timer = setTimeout(() => resolve(unread(SOLANA_FAMILY, null)), deadlineMs);
+  });
+  try {
+    return await Promise.race([readMintExtensionsUnbounded(mint), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function readMintExtensionsUnbounded(mint: string): Promise<MintExtensions> {
   if (!isAddress(mint)) return unread(SOLANA_FAMILY, null);
   let source: string = SOLANA_FAMILY;
   let fetchedAt: string | null = null;
@@ -218,6 +259,7 @@ export async function readMintExtensions(mint: string): Promise<MintExtensions> 
     return {
       status: 'read', source, fetchedAt, maxAgeMs: EXTENSIONS_MAX_AGE_MS,
       transferFee: parsed.transferFee ? feeInEffect(parsed.transferFee, slot as number) : null,
+      scheduledTransferFee: parsed.transferFee ? feeScheduled(parsed.transferFee, slot as number) : null,
       permanentDelegate: parsed.permanentDelegate,
       transferHookProgram: parsed.transferHookProgram,
       defaultAccountState: parsed.defaultAccountState,

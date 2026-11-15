@@ -16,6 +16,14 @@ import type { MintExtensions } from '@xbam/prompts';
  * said with its source and time, and the fixed line that this is not a verdict.
  * No post, handle, asker or job.
  *
+ * **Nothing sends this yet.** There is no route on this installation that serves it
+ * and no sender that pushes it to Studio: this file is the schema, the pure builder
+ * `tokenExtensionsAnswer` and a fixture, so the two sides can agree on the shape.
+ * Which direction it travels (Studio fetching it from the installation, or the
+ * installation pushing it) is the Studio lane's decision and is not made here. It
+ * also carries the fee in effect only, not the scheduled change the card lines show;
+ * widening it is a change to this schema, the fixture and Studio's reader together.
+ *
  * `status` is the first thing to read. Under `read`, a null field means that
  * extension is not on the mint. Under `unread` every field is null and says
  * nothing about the token: it is never a zero fee. `isToken2022` is null when

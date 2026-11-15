@@ -22,6 +22,7 @@ const rpc = vi.hoisted(() => ({
   account: null as unknown,
   slot: 469_812_667 as number | null,
   fail: false,
+  hang: false,
 }));
 vi.mock('@xbam/upstream', async importOriginal => {
   const actual = await importOriginal<typeof import('@xbam/upstream')>();
@@ -29,6 +30,7 @@ vi.mock('@xbam/upstream', async importOriginal => {
     ...actual,
     ask: async (_family: string, query: { method: string; params: unknown[] }) => {
       rpc.calls.push({ method: query.method, params: query.params });
+      if (rpc.hang) return new Promise(() => {});
       if (rpc.fail) throw new Error('rpc down');
       return { value: { result: { context: { slot: rpc.slot }, value: rpc.account }, commitment: 'finalized', slot: rpc.slot },
         provenance: { upstreamId: 'solana_mainnet.official', fetchedAt: new Date().toISOString() } };
@@ -36,7 +38,7 @@ vi.mock('@xbam/upstream', async importOriginal => {
   };
 });
 
-const { parseToken2022Mint, readMintExtensions, feeInEffect, base58Encode, TOKEN_PROGRAM, TOKEN_2022_PROGRAM, EXTENSION_TYPE } =
+const { parseToken2022Mint, readMintExtensions, feeInEffect, feeScheduled, base58Encode, TOKEN_PROGRAM, TOKEN_2022_PROGRAM, EXTENSION_TYPE, EXTENSIONS_DEADLINE_MS } =
   await import('../../packages/runtime/src/tokenExtensions');
 
 const fixture = JSON.parse(readFileSync(new URL('../fixtures/token2022Mint.json', import.meta.url), 'utf8')) as
@@ -68,7 +70,7 @@ const b64 = (bytes: Uint8Array) => Buffer.from(bytes).toString('base64');
 const account = (owner: string, bytes: Uint8Array) => ({ owner, data: [b64(bytes), 'base64'], lamports: 1, executable: false });
 
 beforeEach(() => {
-  rpc.calls = []; rpc.fail = false; rpc.slot = 469_812_667; rpc.account = null;
+  rpc.calls = []; rpc.fail = false; rpc.hang = false; rpc.slot = 469_812_667; rpc.account = null;
 });
 
 describe('decoding the extension area', () => {
@@ -125,6 +127,26 @@ describe('decoding the extension area', () => {
     expect(parseToken2022Mint(mintBytes([delegate(KEY_A), delegate(KEY_B)]))).toBeNull();
   });
 
+  it('never counts one to three stray trailing bytes as a valid read, because they mean an entry was cut', () => {
+    const good = mintBytes([delegate(KEY_A)]);
+    expect(parseToken2022Mint(good)).not.toBeNull();
+    for (const extra of [[1], [1, 0], [1, 0, 0], [0], [0, 0, 0], [0xff, 0xff, 0xff]]) {
+      expect(parseToken2022Mint(Uint8Array.from([...good, ...extra])), `+${extra.length} bytes`).toBeNull();
+    }
+    // The case that matters: a fee entry cut inside its header must not read as "no fee".
+    const cut = Uint8Array.from([...good, EXTENSION_TYPE.TransferFeeConfig, 0]);
+    expect(parseToken2022Mint(cut)).toBeNull();
+    // Whole zeroed padding after the last entry is still the program's own padding.
+    expect(parseToken2022Mint(Uint8Array.from([...good, 0, 0, 0, 0, 0, 0, 0, 0]))).toMatchObject({ permanentDelegate: KEY_A });
+    // Padding is only padding if all of it is zero.
+    expect(parseToken2022Mint(Uint8Array.from([...good, 0, 0, 0, 0, 0, 7, 0, 0]))).toBeNull();
+  });
+
+  it('treats an uninitialised entry type that carries a length as unreadable, not as an unparsed id', () => {
+    expect(parseToken2022Mint(mintBytes([{ type: 0, body: new Uint8Array(8) }]))).toBeNull();
+    expect(parseToken2022Mint(mintBytes([delegate(KEY_A), { type: 0, body: new Uint8Array(8) }]))).toBeNull();
+  });
+
   it('decodes a real mainnet mint: delegate set, hook unset, a zero fee, five undecoded types', () => {
     const parsed = parseToken2022Mint(new Uint8Array(Buffer.from(fixture.data, 'base64')))!;
     expect(parsed.permanentDelegate).toBe('2apBGMsS6ti9RyF5TwQTDswXBWskiJP2LD4cUEDqYJjk');
@@ -154,6 +176,58 @@ describe('reading a mint from the chain', () => {
     const base = new Uint8Array(82); base[45] = 1;
     rpc.account = account(TOKEN_PROGRAM, base);
     expect((await readMintExtensions(MINT)).status).toBe('not_applicable');
+  });
+
+  it('is unread, not "transfer fee: none", when the buffer is cut inside an entry header', async () => {
+    const good = mintBytes([delegate(KEY_A)]);
+    rpc.account = account(TOKEN_2022_PROGRAM, Uint8Array.from([...good, EXTENSION_TYPE.TransferFeeConfig, 0]));
+    const ext = await readMintExtensions(MINT);
+    expect(ext.status).toBe('unread');
+    expect(renderMintExtensionLines(ext)).toEqual(['Token-2022: extensions unread']);
+  });
+
+  it('shows a fee set for a later epoch as scheduled and keeps the fee in effect as the current one', async () => {
+    rpc.slot = 432_000 * 699 + 5;
+    rpc.account = account(TOKEN_2022_PROGRAM, mintBytes([transferFee(feeEntry(10n, 100n, 100), feeEntry(700n, 5000n, 9900))]));
+    const ext = await readMintExtensions(MINT);
+    expect(ext).toMatchObject({ status: 'read', transferFee: { bps: 100, maxFee: '100' }, scheduledTransferFee: { bps: 9900, maxFee: '5000', epoch: '700' } });
+    const lines = renderMintExtensionLines(ext);
+    expect(lines).toContain('transfer fee: 100 bps (1%)');
+    expect(lines).toContain('transfer fee scheduled: 9900 bps (99%), cap 5000 base units, from epoch 700');
+    expect(lines.filter(l => l.startsWith('transfer fee: '))).toHaveLength(1);
+    // Once the epoch has begun it is the current fee and nothing is pending.
+    rpc.slot = 432_000 * 700;
+    const after = await readMintExtensions(MINT);
+    expect(after).toMatchObject({ transferFee: { bps: 9900 }, scheduledTransferFee: null });
+    expect(renderMintExtensionLines(after).some(l => l.includes('scheduled'))).toBe(false);
+  });
+
+  it('says nothing is scheduled when the pending entry changes nothing, or none exists', () => {
+    const same = parseToken2022Mint(mintBytes([transferFee(feeEntry(10n, 100n, 100), feeEntry(700n, 100n, 100))]))!;
+    expect(feeScheduled(same.transferFee!, 432_000 * 5)).toBeNull();
+    const past = parseToken2022Mint(mintBytes([transferFee(feeEntry(10n, 100n, 100), feeEntry(20n, 5000n, 9900))]))!;
+    expect(feeScheduled(past.transferFee!, 432_000 * 30)).toBeNull();
+    // A changed cap alone is a change.
+    const cap = parseToken2022Mint(mintBytes([transferFee(feeEntry(10n, 100n, 100), feeEntry(700n, 1n, 100))]))!;
+    expect(feeScheduled(cap.transferFee!, 432_000 * 5)).toEqual({ bps: 100, maxFee: '1', epoch: '700' });
+  });
+
+  it('gives up on a node that never answers after its own deadline, and says unread', async () => {
+    vi.useFakeTimers();
+    try {
+      rpc.hang = true;
+      const pending = readMintExtensions(MINT);
+      await vi.advanceTimersByTimeAsync(EXTENSIONS_DEADLINE_MS - 1);
+      let settled = false;
+      void pending.then(() => { settled = true; });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(2);
+      expect(await pending).toMatchObject({ status: 'unread' });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('is unread, never a zero fee, for every way the read can fail', async () => {
@@ -193,6 +267,14 @@ describe('what the card says', () => {
     expect(renderMintExtensionLines(read({ transferFee: { bps: 9900, maxFee: '1' } }), now)).toContain('transfer fee: 9900 bps (99%)');
     expect(bpsAsPercent(1)).toBe('0.01');
     expect(bpsAsPercent(10000)).toBe('100');
+  });
+
+  it('prints a scheduled change as its own line with its epoch, never as the current fee', () => {
+    const lines = renderMintExtensionLines(read({ transferFee: { bps: 100, maxFee: '10' }, scheduledTransferFee: { bps: 9900, maxFee: '5000', epoch: '700' } }), now);
+    expect(lines).toContain('transfer fee: 100 bps (1%)');
+    expect(lines).toContain('transfer fee scheduled: 9900 bps (99%), cap 5000 base units, from epoch 700');
+    expect(renderMintExtensionLines(read({ transferFee: { bps: 100, maxFee: '10' }, scheduledTransferFee: null }), now).some(l => l.includes('scheduled'))).toBe(false);
+    expect(lines.join('\n')).not.toMatch(/honeypot|scam|\bsafe\b|\brug\b|avoid|\bbuy\b|\bsell\b/i);
   });
 
   it('distinguishes a present zero fee from no fee extension', () => {

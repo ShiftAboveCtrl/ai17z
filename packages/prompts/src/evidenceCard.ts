@@ -95,6 +95,8 @@ export type MintExtensions =
       status: 'read'; source: string; fetchedAt: string | null; maxAgeMs: number;
       /** The fee in effect at the slot the account was read, in basis points, with the cap as an exact base-unit integer. */
       transferFee: { bps: number; maxFee: string } | null;
+      /** A fee change set for a later epoch: not in effect yet, shown beside the one that is. Absent or null when none is pending. */
+      scheduledTransferFee?: { bps: number; maxFee: string; epoch: string } | null;
       /** An address only when one is set. An extension with the authority unset is no delegate. */
       permanentDelegate: string | null;
       transferHookProgram: string | null;
@@ -122,11 +124,13 @@ export function renderMintExtensionLines(ext: MintExtensions, now = Date.now()):
   if (!current || ext.status === 'unread') return ['Token-2022: extensions unread'];
   if (ext.status === 'not_applicable') return [`Token-2022: not applicable (SPL Token) ${from}`];
   const fee = ext.transferFee;
+  const scheduled = ext.scheduledTransferFee;
   const ids = ext.otherTypeIds.length ? ` (type ids ${ext.otherTypeIds.join(', ')})` : '';
   return [
     `Token-2022: extensions read ${from}`,
     fee ? `transfer fee: ${fee.bps} bps (${bpsAsPercent(fee.bps)}%)` : 'transfer fee: none',
     ...(fee ? [`transfer fee cap: ${fee.maxFee} base units`] : []),
+    ...(fee && scheduled ? [`transfer fee scheduled: ${scheduled.bps} bps (${bpsAsPercent(scheduled.bps)}%), cap ${scheduled.maxFee} base units, from epoch ${scheduled.epoch}`] : []),
     `permanent delegate: ${ext.permanentDelegate ?? 'none'}`,
     `transfer hook: ${ext.transferHookProgram ?? 'none'}`,
     ...(ext.defaultAccountState ? [`default account state: ${ext.defaultAccountState}`] : []),
