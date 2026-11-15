@@ -15,7 +15,7 @@ export interface StudioCoinAlertStatus {
 }
 
 export const COIN_ALERTS_SENTENCE =
-  'Watch the coins on your own Studio coin alerts. This account then looks at each one on its own market data, and nothing is sent back to Studio. It reads only your own Studio watches, and it never touches X for this.';
+  'Watch the coins on your own Studio coin alerts. This account searches X for one of those coins every few minutes, inside its usual X reading budget, so a longer list never means more reads. Only the coin addresses come from Studio, and nothing is sent back. What it finds is noticed, never answered on its own.';
 
 /** What an owner has chosen for this account. Another account holding the binding counts as off here. */
 export function coinAlertChoiceFor(status: StudioCoinAlertStatus | null, accountId: string): { enabled: boolean; elsewhere: boolean } {

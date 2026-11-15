@@ -14,7 +14,8 @@ describe('Studio coin alerts opt-in', () => {
     expect(html.match(/aria-checked="false"/g)).toHaveLength(1);
     expect(html).not.toContain('aria-checked="true"');
     expect(html).toContain(COIN_ALERTS_SENTENCE);
-    expect(COIN_ALERTS_SENTENCE).toContain('only your own Studio watches');
+    expect(COIN_ALERTS_SENTENCE).toContain('inside its usual X reading budget');
+    expect(COIN_ALERTS_SENTENCE).not.toContain('never touches X');
   });
   it('shows waiting, then the count watched and skipped', () => {
     expect(view({ status: bound() })).toContain('Waiting for the first sync with Studio.');
