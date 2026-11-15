@@ -472,6 +472,13 @@ export const StudioPolicy = z.object({
   /** Which complete window a public post is about. */
   paperRecordWindow: z.enum(['7d', '30d', '90d']).default('7d'),
   /**
+   * End a paper record post with the link to this agent's published Studio page,
+   * which carries its simulated paper record. Separate from posting the record
+   * and off by default. The runtime builds the link from the linked Studio
+   * origin and a confirmed publication; a link the model wrote is held.
+   */
+  linkPaperRecord: z.boolean().default(false),
+  /**
    * Let the agent put one post about a published Trader DNA study into the idea
    * backlog. Off by default, and it needs `traderDnaStudyId` too. The post says
    * which behaviours survived Studio's luck filters at what evidence level and

@@ -57,7 +57,7 @@ async function receiptProjection(agentId: string): Promise<z.infer<typeof Receip
 }
 const digestOf = (manifest: PublicHomeManifest) => createHash('sha256').update(canonicalJson(manifest)).digest('hex');
 interface Pending { manifest: PublicHomeManifest; digest: string; key: string; expiresAt: string; origin: string | null; installationId: string | null; linkedAt: string | null }
-interface Confirmed { published: boolean; slug: string; origin: string; installationId: string; linkedAt: string; confirmedAt: string; validUntil: string; digest: string; revision: string;
+interface Confirmed { published: boolean; /** Whether the published page carries a paper record snapshot. Absent on older rows, which read as no. */ paper?: boolean; slug: string; origin: string; installationId: string; linkedAt: string; confirmedAt: string; validUntil: string; digest: string; revision: string;
   renewal?: { key: string; attemptedAt: string; stopped: boolean } }
 interface Row extends Record<string, unknown> { pending: Pending | null; confirmed: Confirmed | null; post_link: boolean; problem: string | null; proposed_digest: string | null; pitch: string | null }
 const empty = (): Row => ({ pending: null, confirmed: null, post_link: false, problem: null, proposed_digest: null, pitch: null });
@@ -145,7 +145,7 @@ export async function publishPublicHome(input: { agentId: string; ownerId: strin
       || status.origin !== p.origin || status.installationId !== p.installationId || status.linkedAt !== p.linkedAt) return { ok: false as const, why: 'Enable control on the linked Studio, then preview again.' };
     const result = await studioPublicHomeRequest(input.agentId, { protocol: 1, operation: 'PUBLISH', idempotency_key: p.key, manifest: p.manifest, manifest_sha256: p.digest }, { origin: p.origin, installationId: p.installationId, linkedAt: p.linkedAt });
     if (!result.ok || !result.published || result.digest !== p.digest) return problem(input.agentId);
-    const confirmed: Confirmed = { published: true, slug: result.slug, origin: p.origin, installationId: p.installationId, linkedAt: p.linkedAt, digest: p.digest, revision: p.key, confirmedAt: now.toISOString(), validUntil: p.expiresAt };
+    const confirmed: Confirmed = { published: true, paper: p.manifest.paper !== null, slug: result.slug, origin: p.origin, installationId: p.installationId, linkedAt: p.linkedAt, digest: p.digest, revision: p.key, confirmedAt: now.toISOString(), validUntil: p.expiresAt };
     await query('UPDATE agent_public_home SET confirmed=$2::jsonb, problem=NULL WHERE agent_id=$1', [input.agentId, JSON.stringify(confirmed)]);
     await publicHomeRepublished(input.agentId);
     return { ok: true as const, url: `${p.origin}/a/${result.slug}` };

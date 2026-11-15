@@ -169,6 +169,8 @@ export function paperIdeaFrom(record: PaperRecord, options: { allowPnl: boolean 
     options.allowPnl
       ? 'A loss is stated as plainly as a gain.'
       : 'Do not say whether the trades made or lost money, and give no profit, loss, return or win count.',
+    // Any link is held, so the model is told not to write one; a proven one is added for it.
+    'Do not write any link. If a link belongs, it is added for you after your text.',
   ];
   return { summary, detail: rules.join('\n'), windowEnd: record.window.end };
 }
