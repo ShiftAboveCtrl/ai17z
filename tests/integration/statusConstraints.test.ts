@@ -7,6 +7,7 @@ import {
   PROVIDER_KINDS,
   TELEGRAM_OUTBOX_STATES,
   TRACE_EVENT_TYPES,
+  EVIDENCE_COMPARE_SIDES,
   EVIDENCE_FOLLOW_UP_STATES,
   TRADE_INTENT_STATUSES,
   TRADE_MODES,
@@ -54,6 +55,9 @@ it('persists two reads of one comparison, one per side, and refuses a third side
   const jobId = admitted.jobs[0]!.job.id;
   const insert = (side: number, address: string, job = jobId) => query(`INSERT INTO evidence_compare_requests(job_id,side,agent_id,requester,chain,address,dry_run)
     VALUES($1,$2,$3,'mock:reader','solana',$4,true)`, [job, side, f.agentId, address]);
+  // Every side the registry declares is accepted; anything else is refused.
+  for (const side of EVIDENCE_COMPARE_SIDES) await insert(side, `side-${side}-${uniqueSuffix()}`);
+  await query('DELETE FROM evidence_compare_requests WHERE job_id=$1', [jobId]);
   await insert(0, 'So11111111111111111111111111111111111111112');
   await insert(1, 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
   expect(await query('SELECT side FROM evidence_compare_requests WHERE job_id=$1 ORDER BY side', [jobId])).toEqual([{ side: 0 }, { side: 1 }]);
