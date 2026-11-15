@@ -161,6 +161,14 @@ export const TOOLPACKS: Toolpack[] = [
     prefixes: ['league.'],
   },
   {
+    id: 'ai17z_token',
+    name: 'About $AI17Z',
+    summary:
+      "Let the agent say what $AI17Z is when somebody asks: its contract, the published holder requirement and an observed seven-day median price, with AI17Z Studio named as the source. " +
+      'Facts only, never a forecast or advice, and it never brings the token up on its own.',
+    prefixes: ['ai17z_token.'],
+  },
+  {
     id: 'reference',
     name: 'Reference & Knowledge',
     summary:

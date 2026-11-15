@@ -1,5 +1,6 @@
 import { EvidenceCardControl } from '../../components/EvidenceCardControl';
 import { EvidenceCardLinkControl } from '../../components/EvidenceCardLinkControl';
+import { EvidenceFollowUpControl } from '../../components/EvidenceFollowUpControl';
 import { useEffect, useState } from 'react';
 import type { PolicyConfig } from '@app/lib/types';
 import { MediaPolicy, RESPONSE_SPEEDS, RESPONSE_SPEED_PROFILES } from '@xbam/shared/contracts';
@@ -442,6 +443,10 @@ export function PoliciesSection({
           <EvidenceCardLinkControl
             checked={draft.tools.evidenceCardLink}
             onChange={(v) => patch((n) => void (n.tools.evidenceCardLink = v))}
+          />
+          <EvidenceFollowUpControl
+            checked={draft.tools.evidenceFollowUps}
+            onChange={(v) => patch((n) => void (n.tools.evidenceFollowUps = v))}
           />
           {/*
             The validator rejects any address the agent was not given, and until

@@ -132,6 +132,7 @@
         "allowed": [],
         "capabilityLoop": false,
         "evidenceCardLink": false,
+        "evidenceFollowUps": false,
         "evidenceCards": false,
         "research": {
           "web": true,

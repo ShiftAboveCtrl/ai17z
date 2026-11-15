@@ -251,6 +251,11 @@ export const ToolPolicy = z.object({
    * A separate choice from the card itself, off by default, and never a watch or a trade.
    */
   evidenceCardLink: z.boolean().default(false),
+  /**
+   * Reply once in the card's own thread when an owner-confirmed risk watch on that card crosses.
+   * Its own owner choice, off by default; it never creates a watch and never reads X.
+   */
+  evidenceFollowUps: z.boolean().default(false),
   /** Tool keys this agent may call. Empty means no tools. */
   allowed: z.array(z.string().max(120)).max(200).default([]),
   /**

@@ -41,7 +41,8 @@ export function receiptEvidence(evidence: Evidence, read: SignalObservation, now
   return { verdict, compact, detail: `Radar receipt for ${evidence.watch.chain}:${identity}: ${evidence.watch.predicate.replaceAll('_', ' ')}. ${describe('Before', evidence.before)} ${describe('At post', evidence.after)} ${describe('Now', read, valid)} ${read.definition} Compact receipt (UTC): ${compact} ${valid ? 'What changed: ' + verdict + '.' : 'Reading missing or stale; ungraded.'}` };
 }
 
-async function receiptGate(agentId: string, accountId: string, now: Date, retry = { afterMs: 0 }): Promise<string | null> {
+/** Pause, agent state, account, automation mode, working hours and cadence for something the agent says unprompted. */
+export async function receiptGate(agentId: string, accountId: string, now: Date, retry = { afterMs: 0 }): Promise<string | null> {
   retry.afterMs = 0;
   if ((await pauseState()).paused) return 'Everything is paused.';
   const agent = await agents.getAgent(agentId);

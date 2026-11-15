@@ -7,6 +7,7 @@ import {
   PROVIDER_KINDS,
   TELEGRAM_OUTBOX_STATES,
   TRACE_EVENT_TYPES,
+  EVIDENCE_FOLLOW_UP_STATES,
   TRADE_INTENT_STATUSES,
   TRADE_MODES,
   TRADE_PAUSE_SCOPES,
@@ -59,6 +60,28 @@ it('persists two reads of one comparison, one per side, and refuses a third side
   await expect(insert(1, 'again')).rejects.toThrow(/duplicate key/);
   await expect(insert(2, 'third')).rejects.toThrow(/check constraint/);
   await expect(insert(0, 'orphan', '00000000-0000-4000-8000-000000000001')).rejects.toThrow(/foreign key/);
+});
+
+it('accepts every evidence follow-up state, refuses an unknown one, and keeps one row per crossing and per observation', async () => {
+  const f = await createFixture();
+  const admitted = await ingestNormalizedEvent({ accountId: null, onlyAgentId: f.agentId, event: mockEvent('check one token') });
+  const jobId = admitted.jobs[0]!.job.id;
+  await query(`INSERT INTO evidence_card_requests(job_id,agent_id,requester,chain,address,dry_run,card_job_id)
+    VALUES($1,$2,'mock:reader','solana','So11111111111111111111111111111111111111112',false,$1)`, [jobId, f.agentId]);
+  const accountId = (await accountsRepo.createAccount({ ownerId: f.ownerId, channel: 'mock', handle: uniqueSuffix() })).id;
+  const [radarSource] = await query(`INSERT INTO radar_sources(account_id,kind,target,label,enabled,config)
+    VALUES($1,'market_signal','followup-constraint','t',true,'{}'::jsonb) RETURNING id`, [accountId]);
+  const insert = (state: string, n: number) => query(`INSERT INTO evidence_followups(card_job_id,agent_id,source_id,observation_id,crossing_key,observation,status)
+    VALUES($1,$2,$3,$4,$5,'{}'::jsonb,$6)`, [jobId, f.agentId, radarSource!.id, `obs-${n}`, `key-${n}`, state]);
+  let n = 0;
+  for (const state of EVIDENCE_FOLLOW_UP_STATES) await insert(state, n++);
+  expect(await query('SELECT status FROM evidence_followups ORDER BY status')).toHaveLength(EVIDENCE_FOLLOW_UP_STATES.length);
+  await expect(insert('sent', n++)).rejects.toThrow(/check constraint/);
+  // The same Studio observation, or the same crossing, cannot be offered twice for one card.
+  await expect(query(`INSERT INTO evidence_followups(card_job_id,agent_id,source_id,observation_id,crossing_key,observation)
+    VALUES($1,$2,$3,'obs-0','other-key','{}'::jsonb)`, [jobId, f.agentId, radarSource!.id])).rejects.toThrow(/unique/);
+  await expect(query(`INSERT INTO evidence_followups(card_job_id,agent_id,source_id,observation_id,crossing_key,observation)
+    VALUES($1,$2,$3,'other-obs','key-0','{}'::jsonb)`, [jobId, f.agentId, radarSource!.id])).rejects.toThrow(/unique/);
 });
 
 describe('every channel the contract names is accepted by the database', () => {
