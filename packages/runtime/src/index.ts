@@ -139,6 +139,8 @@ export * from './contractCapabilities';
 export * from './toolpackViews';
 export * from './defiCapabilities';
 export * from './tokenRiskCapabilities';
+export * from './tokenExtensions';
+export * from './studioTokenExtensions';
 export * from './entityCapabilities';
 export * from './feedCapabilities';
 export * from './scholarCapabilities';

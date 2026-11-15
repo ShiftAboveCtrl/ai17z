@@ -79,6 +79,60 @@ export function renderDeployerLines(history: DeployerHistory, now = Date.now()):
   return lines;
 }
 
+/**
+ * What the mint account's own bytes say about Token-2022 extensions.
+ *
+ * Three outcomes, and they are different things to tell somebody:
+ * `not_applicable` (the original Token program has no extensions), `unread`
+ * (the account could not be fetched or its bytes could not be decoded, which says
+ * nothing about whether a fee exists) and `read`. Under `read`, a null field
+ * means that extension is not on the mint. It is never a failed read.
+ */
+export type MintExtensions =
+  | { status: 'unread'; source: string; fetchedAt: string | null; maxAgeMs: number }
+  | { status: 'not_applicable'; source: string; fetchedAt: string | null; maxAgeMs: number }
+  | {
+      status: 'read'; source: string; fetchedAt: string | null; maxAgeMs: number;
+      /** The fee in effect at the slot the account was read, in basis points, with the cap as an exact base-unit integer. */
+      transferFee: { bps: number; maxFee: string } | null;
+      /** An address only when one is set. An extension with the authority unset is no delegate. */
+      permanentDelegate: string | null;
+      transferHookProgram: string | null;
+      defaultAccountState: 'initialized' | 'frozen' | null;
+      /** Extension type ids present that this does not decode. Said, never skipped silently. */
+      otherTypeIds: number[];
+    };
+
+/** Basis points as a percentage without a double: 500 is "5", 25 is "0.25", 1 is "0.01". */
+export function bpsAsPercent(bps: number): string {
+  const whole = Math.floor(bps / 100);
+  const frac = String(bps % 100).padStart(2, '0').replace(/0+$/, '');
+  return frac ? `${whole}.${frac}` : String(whole);
+}
+
+/**
+ * Lines for the Token-2022 section. Fixed template and neutral words. A stale or
+ * malformed reading is one `extensions unread` line, so no old fee is ever
+ * printed as current and no missing one is printed as zero.
+ */
+export function renderMintExtensionLines(ext: MintExtensions, now = Date.now()): string[] {
+  const fetched = Date.parse(ext.fetchedAt ?? '');
+  const current = Number.isFinite(fetched) && now - fetched <= ext.maxAgeMs && fetched <= now + 30_000;
+  const from = `[${ext.source}; fetched ${iso(ext.fetchedAt)}]`;
+  if (!current || ext.status === 'unread') return ['Token-2022: extensions unread'];
+  if (ext.status === 'not_applicable') return [`Token-2022: not applicable (SPL Token) ${from}`];
+  const fee = ext.transferFee;
+  const ids = ext.otherTypeIds.length ? ` (type ids ${ext.otherTypeIds.join(', ')})` : '';
+  return [
+    `Token-2022: extensions read ${from}`,
+    fee ? `transfer fee: ${fee.bps} bps (${bpsAsPercent(fee.bps)}%)` : 'transfer fee: none',
+    ...(fee ? [`transfer fee cap: ${fee.maxFee} base units`] : []),
+    `permanent delegate: ${ext.permanentDelegate ?? 'none'}`,
+    `transfer hook: ${ext.transferHookProgram ?? 'none'}`,
+    ...(ext.defaultAccountState ? [`default account state: ${ext.defaultAccountState}`] : []),
+    ...(ext.otherTypeIds.length ? [`additional unparsed extensions present${ids}`] : []),
+  ];
+}
 
 /** The one way a reading becomes text, for a single card and for a comparison. */
 function readingText(r: CardReading, now: number): string {
@@ -131,12 +185,14 @@ export function renderEvidenceCompare(sides: readonly [CompareSide, CompareSide]
     ...links.flatMap((link, i) => link ? [`${COMPARE_LINK_PREFIXES[i]}${link}`] : [])].join('\n');
 }
 
-export function renderEvidenceCard(readings: CardReading[], offer: string, now = Date.now(), link = '', deployer: DeployerHistory | null = null): string {
+export function renderEvidenceCard(readings: CardReading[], offer: string, now = Date.now(), link = '', deployer: DeployerHistory | null = null, extensions: MintExtensions | null = null): string {
   let found = false;
   const lines = readings.map(r => {
     found ||= readingAvailable(r, now);
     return `${r.label}: ${readingText(r, now)} [${r.source}; fetched ${fetchedText(r)}]`;
   });
-  return ['Token evidence', ...lines, ...(deployer ? renderDeployerLines(deployer, now) : []), ...(!found ? ['evidence not found'] : []), 'not a verdict, reads can be wrong',
+  return ['Token evidence', ...lines, ...(deployer ? renderDeployerLines(deployer, now) : []),
+    ...(extensions ? renderMintExtensionLines(extensions, now) : []),
+    ...(!found ? ['evidence not found'] : []), 'not a verdict, reads can be wrong',
     ...(offer ? [offer] : []), ...(link ? [`${CHECK_LINK_PREFIX}${link}`] : [])].join('\n');
 }

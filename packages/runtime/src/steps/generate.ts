@@ -54,7 +54,7 @@ import { signalIdeaRefusal } from '../signalRadar';
 import { receiptIdeaRefusal } from '../radarReceipts';
 import { publicSelfFacts } from '../publicSelf';
 import { asksForPublicHome, publicHomeReply } from '../studioPublicHome';
-import { deployerLinesOf, evidenceCardOf } from '../evidenceCard';
+import { deployerLinesOf, evidenceCardOf, extensionLinesOf } from '../evidenceCard';
 
 import { classifyEvidence } from '../evidenceClass';
 
@@ -450,8 +450,8 @@ export async function stepValidate(bundle: JobBundle): Promise<void> {
     // it actually read. Only that exact line is exempt from the address rule; a
     // model-written address, or any other address, is still held.
     evidenceCardOf(bundle)?.linkLines?.length ? evidenceCardOf(bundle)!.linkLines! : evidenceCardOf(bundle)?.link ?? null,
-    // The deployer lines carry addresses the card's own capability read from the chain.
-    [...(deployerLinesOf(evidenceCardOf(bundle)) ?? []), ...(evidenceCardOf(bundle)?.echo ? [evidenceCardOf(bundle)!.echo!] : [])],
+    // The deployer and Token-2022 lines carry addresses the card's own capability read from the chain.
+    [...(deployerLinesOf(evidenceCardOf(bundle)) ?? []), ...extensionLinesOf(evidenceCardOf(bundle)), ...(evidenceCardOf(bundle)?.echo ? [evidenceCardOf(bundle)!.echo!] : [])],
   );
   const blocking = result.violations.filter((v) => v.severity !== 'REPAIRED');
   if (evidenceCardOf(bundle) && result.output !== evidenceCardOf(bundle)!.text) {

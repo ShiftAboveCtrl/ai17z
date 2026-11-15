@@ -55,3 +55,37 @@ Acceptance coverage lives in `tests/unit/evidenceCard.test.ts`,
 use mock accounts. Studio confirmation tests use the local DPoP contract
 server. The shared switch was checked at 1440 by 900 and 390 by 844, including
 Space activation, visible keyboard focus and absence of horizontal overflow.
+
+## Token-2022 extensions
+
+A Solana card carries one more section, read from the mint account itself and
+decoded in `packages/runtime/src/tokenExtensions.ts`: one `getAccountInfo` in
+base64, then the type-length-value area after byte 165. It is not a source's
+opinion and not an index field. `solana.read_mint_extensions` exposes the same
+read, and `token.solana_profile` returns it instead of the bare
+`token2022: true` it used to.
+
+The lines are `transfer fee: 500 bps (5%)` (with the cap in base units),
+`permanent delegate`, `transfer hook`, and `default account state` when set.
+A fee extension present at zero reads `0 bps (0%)`; none reads `transfer fee:
+none`; the original Token program reads `Token-2022: not applicable (SPL
+Token)`. The fee shown is the one in effect at the slot the account was read,
+chosen from the two scheduled entries by epoch. Type ids this does not decode
+are listed as `additional unparsed extensions present`, never skipped quietly.
+
+**Absent is never zero.** Any failed fetch, wrong owner, short or padded-wrong
+buffer, or known extension of the wrong size is one line, `Token-2022:
+extensions unread`, with no number in it. A reading older than five minutes
+prints the same line. These lines are not `CardReading`s: Studio's card picture
+(`studioEvidenceCardImage.ts`) is frozen at five labels and is untouched. Studio's
+check page takes the separate answer in `studioTokenExtensions.ts`
+(`GET /api/v1/installation/token-extensions`), pinned by
+`tests/fixtures/studioTokenExtensions.json`.
+
+The lines are runtime-built, so the address rule exempts exactly those lines at
+generation and at approval (a delegate or hook is an address), and the send
+check re-reads the mint and sends to review if the fee, delegate or hook changed
+since the owner looked. When a card would overrun the length policy these lines
+are dropped last, after the link and the deployer lines. They cost one RPC read
+inside the same reservation as the rest of the card and spend no X read.
+

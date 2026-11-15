@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { accounts, agents, cadences, capabilities, jobs, actions, query, observability, ops, capabilityPermissions } from '@xbam/database';
 import { DEFAULT_POLICY, defaultCadence, PolicyConfig, type ResolvedContext } from '@xbam/shared/contracts';
-import { renderEvidenceCard, type CardReading, type DeployerHistory } from '@xbam/prompts';
+import { renderEvidenceCard, type CardReading, type DeployerHistory, type MintExtensions } from '@xbam/prompts';
 import { ingestNormalizedEvent } from '@xbam/runtime';
 import * as runtime from '@xbam/runtime';
 import { loadJobBundle } from '../../packages/runtime/src/loadJob';
@@ -23,6 +23,22 @@ let liquidity = 12000;
 const creator = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 let chainRead = false;
 let rpcMethods: string[] = [];
+/** The mint account the mocked node returns, as base64, and its owner. Null is an account that does not exist. */
+let mintAccount: { owner: string; data: string } | null = null;
+const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
+const feeMint = (bps: number, delegateKey: string) => {
+  // A padded mint, the account type, then a transfer fee and a permanent delegate entry, as the program lays them out.
+  const fee = new Uint8Array(108); const view = new DataView(fee.buffer);
+  view.setBigUint64(72, 0n, true); view.setBigUint64(80, 1_000_000n, true); view.setUint16(88, bps, true);
+  view.setBigUint64(90, 0n, true); view.setBigUint64(98, 1_000_000n, true); view.setUint16(106, bps, true);
+  const key = new Uint8Array(32);
+  let n = 0n; for (const ch of delegateKey) n = n * 58n + BigInt('123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'.indexOf(ch));
+  for (let i = 31; i >= 0; i--) { key[i] = Number(n & 0xffn); n >>= 8n; }
+  const entries = [[1, fee], [12, key]] as const;
+  const tlv = entries.flatMap(([t, b]) => [t, 0, b.length, 0, ...b]);
+  const out = new Uint8Array(166 + tlv.length); out[45] = 1; out[165] = 1; out.set(tlv, 166);
+  return Buffer.from(out).toString('base64');
+};
 import { resetDeployerCacheForTest } from '../../packages/runtime/src/deployerHistory';
 vi.mock('undici', () => ({
   Agent: class { async close() {} },
@@ -37,6 +53,8 @@ vi.mock('undici', () => ({
       const { method } = JSON.parse(String(init?.body));
       rpcMethods.push(method);
       const result = method === 'getGenesisHash' ? '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
+        : method === 'getAccountInfo' ? { context: { slot: 469_812_667 },
+          value: mintAccount && { owner: mintAccount.owner, data: [mintAccount.data, 'base64'], lamports: 1, executable: false } }
         : method === 'getSignaturesForAddress' ? [{ signature: 'newer', err: null }, { signature: 'oldest', err: null }]
         : { blockTime: Math.floor(Date.now() / 1000) - 7200, meta: { err: null, innerInstructions: [] },
           transaction: { message: { accountKeys: [{ pubkey: creator, signer: true }],
@@ -55,7 +73,7 @@ vi.mock('undici', () => ({
 
 beforeAll(async () => { await setupTestDatabase(); const r = await import('@xbam/runtime'); await r.bootstrapRuntime(); });
 afterAll(teardownTestDatabase);
-beforeEach(async () => { await truncateAll(); await seedCatalogue(); calls = 0; stale = false; unknown = false; liquidity = 12000; chainRead = false; rpcMethods = []; resetDeployerCacheForTest();
+beforeEach(async () => { await truncateAll(); await seedCatalogue(); calls = 0; stale = false; unknown = false; liquidity = 12000; chainRead = false; rpcMethods = []; mintAccount = null; resetDeployerCacheForTest();
   const u = await import('@xbam/upstream'); u.resetCacheForTest(); u.resetLimiterForTest(); u.resetBreakerForTest(); });
 
 async function fixture(policy: Partial<PolicyConfig> = {}) {
@@ -214,15 +232,17 @@ it('a disabled capability and stranger watch text never read or create a watch',
 /** The card as it stood when the owner saw it, with readings already past the five minute bound. */
 async function ageApprovedCard(jobId: string): Promise<string> {
   const job = await jobs.requireJob(jobId);
-  const context = job.resolvedContext as ResolvedContext & { meta: { evidenceCard: { text: string; readings: CardReading[]; cardJobId: string | null; deployer: DeployerHistory | null } } };
+  const context = job.resolvedContext as ResolvedContext & { meta: { evidenceCard: { text: string; readings: CardReading[]; cardJobId: string | null; deployer: DeployerHistory | null; extensions?: MintExtensions | null } } };
   const seenAt = Date.now() - 6 * 60_000;
   const stamp = new Date(seenAt).toISOString();
   const readings = context.meta.evidenceCard.readings.map(reading => ({ ...reading, fetchedAt: stamp, observedAt: stamp }));
   const offer = context.meta.evidenceCard.text.split('\n').find(line => line.startsWith('Owner:')) ?? '';
   const before = context.meta.evidenceCard.deployer;
   const aged = before && { ...before, launchesFetchedAt: stamp, launchesObservedAt: stamp };
-  const text = renderEvidenceCard(readings, offer, seenAt, '', aged);
-  const resolvedContext = { ...context, meta: { ...context.meta, evidenceCard: { ...context.meta.evidenceCard, text, readings, deployer: aged } } };
+  const extBefore = context.meta.evidenceCard.extensions ?? null;
+  const agedExt = extBefore && { ...extBefore, fetchedAt: stamp };
+  const text = renderEvidenceCard(readings, offer, seenAt, '', aged, agedExt);
+  const resolvedContext = { ...context, meta: { ...context.meta, evidenceCard: { ...context.meta.evidenceCard, text, readings, deployer: aged, extensions: agedExt } } };
   await jobs.updateJob(jobId, { resolvedContext: resolvedContext as ResolvedContext, generatedOutput: text, validatedOutput: text });
   return text;
 }
@@ -377,7 +397,7 @@ it('adds the deployer read from the chain, with sources, and keeps every existin
   expect(out).toContain('Liquidity: 12000 USD');
   expect(out).toContain('not a verdict, reads can be wrong');
   expect(out).not.toMatch(/\b(?:rug|scam|serial|dev dumped|safe|avoid)\b/i);
-  expect(rpcMethods.filter(m => m !== 'getGenesisHash')).toEqual(['getSignaturesForAddress', 'getTransaction']);
+  expect(rpcMethods.filter(m => m !== 'getGenesisHash')).toEqual(['getSignaturesForAddress', 'getTransaction', 'getAccountInfo']);
   expect(await query('SELECT * FROM evidence_card_requests')).toHaveLength(1);
 });
 
@@ -395,5 +415,79 @@ it('leaves the deployer lines off rather than holding a card the length policy c
   const tight = await ask(await fixture({ output: { ...DEFAULT_POLICY.output, maxCharacters: base.length } }), `@agent check ${mint2}`, true);
   expect(tight.status).toBe('DRY_RUN_COMPLETED');
   expect(tight.validatedOutput).not.toContain('Deployer');
+  expect(tight.validatedOutput).toContain('Liquidity:');
+});
+
+const DELEGATE = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
+
+it('adds the Token-2022 transfer fee and delegate read from the mint account, and the validator lets the exact lines through', async () => {
+  chainRead = true;
+  mintAccount = { owner: TOKEN_2022, data: feeMint(500, DELEGATE) };
+  const job = await ask(await fixture(), undefined, true);
+  const out = job.validatedOutput!;
+  expect(job.status).toBe('DRY_RUN_COMPLETED');
+  expect(out).toMatch(/Token-2022: extensions read \[solana_mainnet\.official; fetched \d{4}-/);
+  expect(out).toContain('transfer fee: 500 bps (5%)');
+  expect(out).toContain('transfer fee cap: 1000000 base units');
+  expect(out).toContain(`permanent delegate: ${DELEGATE}`);
+  expect(out).toContain('transfer hook: none');
+  // It sits before the disclaimer, and every earlier line is still there.
+  expect(out.indexOf('transfer fee: 500')).toBeLessThan(out.indexOf('not a verdict, reads can be wrong'));
+  expect(out).toContain('Liquidity: 12000 USD');
+  expect(out).not.toMatch(/honeypot|scam|\brug\b|\bsafe\b|avoid/i);
+  expect(rpcMethods.filter(m => m === 'getAccountInfo')).toHaveLength(1);
+});
+
+it('says the original Token program has no extensions, and unread when the mint cannot be read, never zero bps', async () => {
+  chainRead = true;
+  const base = new Uint8Array(82); base[45] = 1;
+  mintAccount = { owner: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', data: Buffer.from(base).toString('base64') };
+  const plain = await ask(await fixture(), undefined, true);
+  expect(plain.validatedOutput).toMatch(/Token-2022: not applicable \(SPL Token\) \[solana_mainnet\.official/);
+  mintAccount = null;
+  const missing = await ask(await fixture(), `@agent check ${mint2}`, true);
+  expect(missing.validatedOutput).toContain('Token-2022: extensions unread');
+  expect(missing.validatedOutput).not.toMatch(/\bbps\b/);
+  expect(missing.validatedOutput).toContain('Liquidity: 12000 USD');
+});
+
+it('sends an approved card with extension lines after its readings expire when the fresh read has the same fee', async () => {
+  chainRead = true;
+  mintAccount = { owner: TOKEN_2022, data: feeMint(500, DELEGATE) };
+  const f = await fixture({ automation: { mode: 'REVIEW_BEFORE_ACTION', dryRunDefault: false } });
+  const waiting = await ask(f);
+  expect(waiting.status).toBe('WAITING_FOR_APPROVAL');
+  const approved = await ageApprovedCard(waiting.id);
+  expect(approved).toContain('transfer fee: 500 bps (5%)');
+  (await import('@xbam/upstream')).resetCacheForTest();
+  await runtime.approveJob({ jobId: waiting.id, decidedBy: f.ownerId });
+  await drainJobs();
+  expect((await jobs.requireJob(waiting.id)).status).toBe('EXECUTED');
+});
+
+it('holds an approved card for review when the fee changed since the owner looked', async () => {
+  chainRead = true;
+  mintAccount = { owner: TOKEN_2022, data: feeMint(500, DELEGATE) };
+  const f = await fixture({ automation: { mode: 'REVIEW_BEFORE_ACTION', dryRunDefault: false } });
+  const waiting = await ask(f);
+  expect(waiting.status).toBe('WAITING_FOR_APPROVAL');
+  await ageApprovedCard(waiting.id);
+  mintAccount = { owner: TOKEN_2022, data: feeMint(9900, DELEGATE) };
+  (await import('@xbam/upstream')).resetCacheForTest();
+  await runtime.approveJob({ jobId: waiting.id, decidedBy: f.ownerId });
+  await drainJobs();
+  const held = await jobs.requireJob(waiting.id);
+  expect(held.status).not.toBe('EXECUTED');
+  expect((await actions.listJobActions(waiting.id)).filter(a => !a.dryRun && a.status === 'EXECUTED')).toHaveLength(0);
+});
+
+it('leaves the Token-2022 lines off last, after the link and the deployer, rather than holding a card the length policy cannot fit', async () => {
+  chainRead = true;
+  mintAccount = { owner: TOKEN_2022, data: feeMint(500, DELEGATE) };
+  const roomy = await ask(await fixture(), undefined, true);
+  const base = roomy.validatedOutput!.split('\n').filter(l => !/^(Deployer|Launches by|Token-2022|transfer fee|permanent delegate|transfer hook)/.test(l)).join('\n');
+  const tight = await ask(await fixture({ output: { ...DEFAULT_POLICY.output, maxCharacters: base.length } }), `@agent check ${mint2}`, true);
+  expect(tight.status).toBe('DRY_RUN_COMPLETED');
+  expect(tight.validatedOutput).not.toContain('Token-2022');
   expect(tight.validatedOutput).toContain('Liquidity:');
 });

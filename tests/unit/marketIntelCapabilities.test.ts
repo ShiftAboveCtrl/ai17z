@@ -22,9 +22,15 @@ vi.mock('undici', () => ({
   Agent: class {
     async close() {}
   },
-  async fetch(input: unknown) {
+  async fetch(input: unknown, init?: { body?: string }) {
     const url = String(input);
     requested.push(url);
+    // A Solana node is asked by method in the body, not by path.
+    const rpc = typeof init?.body === 'string' && init.body.includes('"jsonrpc"') ? (JSON.parse(init.body) as { method?: string }).method : undefined;
+    if (rpc) {
+      const answer = replies[`rpc:${rpc}`] ?? { body: JSON.stringify({ jsonrpc: '2.0', id: 1, result: null }) };
+      return new Response(answer.body, { status: answer.status ?? 200, headers: new Headers({ 'content-type': 'application/json' }) });
+    }
     const key = Object.keys(replies)
       .filter((candidate) => url.includes(candidate))
       .sort((a, b) => b.length - a.length)[0];
@@ -38,6 +44,7 @@ const {
   registerJupiterSwapUpstreams,
   registerJupiterUpstreams,
   registerMarketUpstreams,
+  registerSolanaUpstreams,
   resetBreakerForTest,
   resetCacheForTest,
   resetLimiterForTest,
@@ -102,6 +109,7 @@ beforeEach(() => {
   registerJupiterUpstreams();
   registerJupiterSwapUpstreams();
   registerMarketUpstreams();
+  registerSolanaUpstreams();
   registerMarketIntelCapabilities();
   replies = {};
   requested = [];
@@ -239,6 +247,50 @@ describe('a Solana token', () => {
       twitter: 'https://x.com/bonk',
       icon: 'https://arweave.net/hQiPZOsRZXGXBJd_82PhVdlM_hACsT_q6wqwf5cSY7I',
       priceBlock: 455417028,
+    });
+  });
+
+  describe('Token-2022 extensions', () => {
+    const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
+    const DELEGATE = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
+    /** A padded mint carrying a 5% transfer fee and a permanent delegate, laid out the way the program writes it. */
+    function feeMintData(): string {
+      const fee = new Uint8Array(108); const view = new DataView(fee.buffer);
+      view.setBigUint64(80, 1_000_000n, true); view.setUint16(88, 500, true);
+      view.setBigUint64(98, 1_000_000n, true); view.setUint16(106, 500, true);
+      const key = new Uint8Array(32);
+      let n = 0n; for (const ch of DELEGATE) n = n * 58n + BigInt('123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'.indexOf(ch));
+      for (let i = 31; i >= 0; i--) { key[i] = Number(n & 0xffn); n >>= 8n; }
+      const tlv = [[1, fee], [12, key]].flatMap(([t, b]) => [t as number, 0, (b as Uint8Array).length, 0, ...(b as Uint8Array)]);
+      const out = new Uint8Array(166 + tlv.length); out[45] = 1; out[165] = 1; out.set(tlv, 166);
+      return Buffer.from(out).toString('base64');
+    }
+    const rpc = (result: unknown) => ({ body: JSON.stringify({ jsonrpc: '2.0', id: 1, result }) });
+
+    it('decodes the fee, delegate and hook from the mint account instead of reporting a bare yes', async () => {
+      replies[`/tokens/v2/search?query=${BONK}`] = { body: JSON.stringify([{ ...record, tokenProgram: TOKEN_2022 }]) };
+      replies['rpc:getGenesisHash'] = rpc('5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d');
+      replies['rpc:getAccountInfo'] = rpc({ context: { slot: 469_812_667 }, value: { owner: TOKEN_2022, data: [feeMintData(), 'base64'], lamports: 1, executable: false } });
+      const answer = await run<{ token: { token2022: boolean }; extensions: Record<string, unknown> }>('token.solana_profile', { mint: BONK });
+      expect(answer.token.token2022).toBe(true);
+      expect(answer.extensions).toMatchObject({ status: 'read', transferFee: { bps: 500, maxFee: '1000000' },
+        permanentDelegate: DELEGATE, transferHookProgram: null });
+    });
+
+    it('says unread, with no fee at all, when the mint account cannot be read', async () => {
+      replies[`/tokens/v2/search?query=${BONK}`] = { body: JSON.stringify([{ ...record, tokenProgram: TOKEN_2022 }]) };
+      replies['rpc:getGenesisHash'] = rpc('5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d');
+      replies['rpc:getAccountInfo'] = rpc({ context: { slot: 1 }, value: null });
+      const answer = await run<{ extensions: Record<string, unknown> }>('token.solana_profile', { mint: BONK });
+      expect(answer.extensions.status).toBe('unread');
+      expect(answer.extensions).not.toHaveProperty('transferFee');
+    });
+
+    it('reads nothing from the chain when the index says the original Token program', async () => {
+      replies[`/tokens/v2/search?query=${BONK}`] = { body: JSON.stringify([record]) };
+      const answer = await run<{ extensions: unknown }>('token.solana_profile', { mint: BONK });
+      expect(answer.extensions).toBeNull();
+      expect(requested.some((u) => u.includes('solana'))).toBe(false);
     });
   });
 

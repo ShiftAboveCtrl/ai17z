@@ -2,7 +2,7 @@ import { agents, capabilityInvocations, jobs, observability, query, withTransact
 import { createLogger, PipelineError } from '@xbam/shared';
 import { MediaInventory, PolicyConfig, type ResolvedContext } from '@xbam/shared/contracts';
 import { getCapability, invokeCapability, resolvePermission } from '@xbam/tools';
-import { CHECK_LINK_PREFIX, COMPARE_LINK_PREFIXES, renderDeployerLines, renderEvidenceCard, renderEvidenceCompare, shortAddress, type CardReading, type DeployerHistory } from '@xbam/prompts';
+import { CHECK_LINK_PREFIX, COMPARE_LINK_PREFIXES, renderDeployerLines, renderEvidenceCard, renderEvidenceCompare, renderMintExtensionLines, shortAddress, type CardReading, type DeployerHistory, type MintExtensions } from '@xbam/prompts';
 import { capabilitySettings } from './capabilityPermissions';
 import { checkLinkUrl, linkedCheckOrigin, studioCheckLink } from './studioCheckLink';
 import { pauseState } from './killSwitch';
@@ -29,6 +29,8 @@ export interface EvidenceCard {
   compare?: { chain: string; sides: [CompareCardSide, CompareCardSide]; links: [string | null, string | null] };
   linkLines?: string[];
   deployer?: DeployerHistory | null;
+  /** Token-2022 extension lines read from the mint account. Beside the readings: Studio's picture takes only five labels. */
+  extensions?: MintExtensions | null;
   /** First line of a card whose address came from a picture, kept apart so the send check can prove the rest. */
   echo?: string | null;
 }
@@ -140,6 +142,17 @@ export function deployerLinesOf(card: EvidenceCard | null): string[] | null {
   return card?.deployer ? renderDeployerLines(card.deployer) : null;
 }
 
+/**
+ * The exact Token-2022 lines a card carries, so the address rule can exempt those and nothing else.
+ * Rendered as of the read, the way the card was, so a card checked later still matches itself.
+ */
+export function extensionLinesOf(card: EvidenceCard | null): string[] {
+  const ext = card?.extensions;
+  if (!ext) return [];
+  const fetched = Date.parse(ext.fetchedAt ?? '');
+  return renderMintExtensionLines(ext, Number.isFinite(fetched) ? fetched : undefined);
+}
+
 async function permitted(agentId: string): Promise<boolean> {
   const capability = getCapability(CAP);
   if (!capability) return false;
@@ -180,6 +193,7 @@ export async function researchEvidenceCard(bundle: JobBundle): Promise<boolean> 
   let link: string | null = null;
   let readings: CardReading[] = [];
   let deployer: DeployerHistory | null = null;
+  let extensions: MintExtensions | null = null;
   const promo = readPromo(context.incomingText.replace(request.address ?? /$^/, ''));
   if (intent === 'DEFLECT' || promo.level !== 'none' || PITCH_WORDS.test(context.incomingText)) {
     text = 'I do not evaluate token pitches.';
@@ -222,31 +236,37 @@ export async function researchEvidenceCard(bundle: JobBundle): Promise<boolean> 
         await capabilityInvocations.recordInvocation({ agentId: bundle.agent.id, jobId: bundle.job.id, accountId: bundle.job.accountId,
           capabilityId: CAP, step: 0, outcome: result.outcome, detail: result.detail,
           input: result.input, output: result.output, durationMs: result.durationMs });
-        const output = result.output as { cardReadings?: CardReading[]; chain?: string; address?: string; deployer?: DeployerHistory } | null;
+        const output = result.output as { cardReadings?: CardReading[]; chain?: string; address?: string; deployer?: DeployerHistory; extensions?: MintExtensions } | null;
         readings = output?.cardReadings ?? [];
         deployer = readings.length ? output?.deployer ?? null : null;
+        extensions = readings.length ? output?.extensions ?? null : null;
         const offer = request.chain === 'solana'
           ? `Owner: watch this with /watch ${bundle.job.id.slice(0, 8)} in paired Telegram; choose a condition and threshold.` : '';
         // The link needs its own owner opt-in, and only for the exact token the capability just read.
         const read = output?.chain === request.chain && output.address?.toLowerCase() === request.address.toLowerCase();
         link = read && bundle.policy.tools.evidenceCardLink && !bundle.policy.output.forbidLinks
           ? await studioCheckLink({ chain: request.chain, address: request.address, readings }) : null;
-        text = echoed(readings.length ? renderEvidenceCard(readings, offer, undefined, link ?? '', deployer)
+        text = echoed(readings.length ? renderEvidenceCard(readings, offer, undefined, link ?? '', deployer, extensions)
           : 'Token evidence unavailable; evidence not found. This is not a verdict, reads can be wrong.');
         // The inline card is the reply. A section that would push it past the length policy is left off
-        // rather than sending the whole card to review: first the link, then the deployer lines.
+        // rather than sending the whole card to review: first the link, then the deployer lines, and the
+        // Token-2022 lines last because a transfer fee is the part a trader asks about.
         if (link && text.length > bundle.policy.output.maxCharacters) {
           link = null;
-          text = echoed(renderEvidenceCard(readings, offer, undefined, '', deployer));
+          text = echoed(renderEvidenceCard(readings, offer, undefined, '', deployer, extensions));
         }
         if (readings.length && deployer && text.length > bundle.policy.output.maxCharacters) {
           deployer = null;
-          text = echoed(renderEvidenceCard(readings, offer, undefined, '', null));
+          text = echoed(renderEvidenceCard(readings, offer, undefined, '', null, extensions));
+        }
+        if (readings.length && extensions && text.length > bundle.policy.output.maxCharacters) {
+          extensions = null;
+          text = echoed(renderEvidenceCard(readings, offer, undefined, '', null, null));
         }
       }
     }
   }
-  const evidenceCard: EvidenceCard = { text, readings, cardJobId, link, deployer, echo: echo && request.address && !request.refusal ? echo : null };
+  const evidenceCard: EvidenceCard = { text, readings, cardJobId, link, deployer, extensions, echo: echo && request.address && !request.refusal ? echo : null };
   // Evidence retains the same fence and attribution as ordinary research.
   const research = { findings: [{ kind: 'token', query: request.address ?? 'ambiguous token', source: CAP,
     title: 'Token evidence card', summary: text, url: null, retrievedAt: new Date().toISOString() }], failed: [], note: 'Deterministic token evidence reply.' };
@@ -419,6 +439,14 @@ function sameReadings(left: CardReading[], right: CardReading[]): boolean {
   });
 }
 
+/** The fee and hook a mint carries are a reading and must be the ones the owner saw. Fetch times always move. */
+function sameExtensions(left: MintExtensions | null, right: MintExtensions | null): boolean {
+  if (!left || !right) return left === right;
+  // Key order is not part of the reading: a card stored as jsonb comes back with its keys reordered.
+  const bare = (ext: MintExtensions) => JSON.stringify(Object.entries({ ...ext, fetchedAt: null }).sort(([a], [b]) => (a < b ? -1 : 1)));
+  return bare(left) === bare(right);
+}
+
 /** The creator never changes; the launch count is a reading and must be the one the owner saw. */
 function sameDeployer(left: DeployerHistory | null, right: DeployerHistory | null): boolean {
   if (!left || !right) return left === right;
@@ -441,15 +469,15 @@ function readingsExpired(readings: CardReading[], now = Date.now()): boolean {
  * shows the value the owner approved. Rendering at the current time would
  * call that same card a mismatch.
  */
-function textMatchesReadings(text: string, readings: CardReading[], offer: string, link: string, deployer: DeployerHistory | null = null, echo = ''): boolean {
+function textMatchesReadings(text: string, readings: CardReading[], offer: string, link: string, deployer: DeployerHistory | null = null, echo = '', extensions: MintExtensions | null = null): boolean {
   // The launch count comes from the same index record as the readings, so their fetch time is the card's.
   const fetched = readings.map(reading => Date.parse(reading.fetchedAt ?? '')).filter(time => Number.isFinite(time));
   const asOf = fetched.length ? Math.max(...fetched) : Date.now();
-  return `${echo ? `${echo}\n` : ''}${renderEvidenceCard(readings, offer, asOf, link, deployer)}` === text;
+  return `${echo ? `${echo}\n` : ''}${renderEvidenceCard(readings, offer, asOf, link, deployer, extensions)}` === text;
 }
 
 /** The same inspect path a first card uses: permission, research budget, asker cap, mint cooldown, then the capability. */
-async function rereadEvidenceCard(bundle: JobBundle, card: EvidenceCard): Promise<{ text: string; readings: CardReading[]; deployer: DeployerHistory | null } | null> {
+async function rereadEvidenceCard(bundle: JobBundle, card: EvidenceCard): Promise<{ text: string; readings: CardReading[]; deployer: DeployerHistory | null; extensions: MintExtensions | null } | null> {
   const context = bundle.job.resolvedContext;
   const request = context ? evidenceRequestOf(context) : null;
   if (!request?.address || !request.chain || request.refusal || !(await permitted(bundle.agent.id))) return null;
@@ -482,12 +510,13 @@ async function rereadEvidenceCard(bundle: JobBundle, card: EvidenceCard): Promis
   await capabilityInvocations.recordInvocation({ agentId: bundle.agent.id, jobId: bundle.job.id, accountId: bundle.job.accountId,
     capabilityId: CAP, step: 0, outcome: result.outcome, detail: result.detail,
     input: result.input, output: result.output, durationMs: result.durationMs });
-  const output = result.output as { cardReadings?: CardReading[]; deployer?: DeployerHistory } | null;
+  const output = result.output as { cardReadings?: CardReading[]; deployer?: DeployerHistory; extensions?: MintExtensions } | null;
   const readings = output?.cardReadings ?? [];
   if (!readings.length) return null;
   const deployer = output?.deployer ?? null;
+  const extensions = output?.extensions ?? null;
   const offer = card.text.split('\n').find(line => line.startsWith('Owner:')) ?? '';
-  return { text: `${card.echo ? `${card.echo}\n` : ''}${renderEvidenceCard(readings, offer, undefined, card.link ?? '', deployer)}`, readings, deployer };
+  return { text: `${card.echo ? `${card.echo}\n` : ''}${renderEvidenceCard(readings, offer, undefined, card.link ?? '', deployer, extensions)}`, readings, deployer, extensions };
 }
 
 /**
@@ -524,7 +553,7 @@ export async function checkEvidenceCardAtSend(bundle: JobBundle, output: string)
       throw PipelineError.review('evidence_card_changed', 'The check page link no longer matches the linked Studio or the owner setting. Generate a fresh card.');
     }
   }
-  const mismatched = card.readings.length > 0 && !textMatchesReadings(card.text, card.readings, offer, link, card.deployer ?? null, card.echo ?? '');
+  const mismatched = card.readings.length > 0 && !textMatchesReadings(card.text, card.readings, offer, link, card.deployer ?? null, card.echo ?? '', card.extensions ?? null);
   if (output !== card.text || mismatched) {
     throw PipelineError.review('evidence_card_changed', 'The complete sourced evidence card changed or its readings expired. Generate a fresh card.');
   }
@@ -532,7 +561,8 @@ export async function checkEvidenceCardAtSend(bundle: JobBundle, output: string)
     const fresh = await rereadEvidenceCard(bundle, card);
     // A new read carries a new fetch time, so the rendered lines never match
     // character for character. The same readings are the card the owner saw.
-    if (fresh && sameReadings(fresh.readings, card.readings) && sameDeployer(fresh.deployer, card.deployer ?? null)) return;
+    if (fresh && sameReadings(fresh.readings, card.readings) && sameDeployer(fresh.deployer, card.deployer ?? null)
+        && sameExtensions(fresh.extensions, card.extensions ?? null)) return;
     throw PipelineError.review('evidence_card_changed', fresh ? READINGS_CHANGED
       : 'The complete sourced evidence card changed or its readings expired. Generate a fresh card.');
   }

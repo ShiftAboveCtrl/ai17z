@@ -1,0 +1,16 @@
+{
+  "protocol": 1,
+  "chain": "solana",
+  "address": "So11111111111111111111111111111111111111112",
+  "status": "read",
+  "isToken2022": true,
+  "transferFeeBps": 500,
+  "maxFee": "1000000",
+  "permanentDelegate": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+  "transferHookProgram": null,
+  "defaultAccountState": null,
+  "unparsedExtensionTypeIds": [3, 18],
+  "source": "solana_mainnet.official",
+  "fetched_at": "2026-11-14T11:59:30.000Z",
+  "disclaimer": "not a verdict, reads can be wrong"
+}

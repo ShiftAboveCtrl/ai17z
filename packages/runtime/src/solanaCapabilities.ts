@@ -14,6 +14,8 @@ import {
   type SolanaQuery,
   type SolanaResult,
 } from '@xbam/upstream';
+import { renderMintExtensionLines } from '@xbam/prompts';
+import { MintExtensionsOut, readMintExtensions } from './tokenExtensions';
 
 /**
  * What an agent may ask about Solana.
@@ -848,7 +850,30 @@ const signatures = defineCapability({
   },
 });
 
+const mintExtensions = defineCapability({
+  id: 'solana.read_mint_extensions',
+  name: 'Read the Token-2022 extensions on a Solana mint',
+  description:
+    'Whether a token mint carries a transfer fee (a fee or tax taken on every transfer), a transfer hook, a ' +
+    'permanent delegate or a default account state, decoded from the mint account itself. Reports the fee in ' +
+    'basis points and percent, or says the original Token program has no extensions, or says the extensions ' +
+    'could not be read. A mint that could not be read has no fee reported, never a zero fee. Takes the exact mint address.',
+  category: 'READ',
+  effect: 'READ',
+  risk: 'LOW',
+  input: z.object({ mint: Address }),
+  output: z.object({ mint: z.string(), extensions: MintExtensionsOut, lines: z.array(z.string()) }),
+  modelCallable: true,
+  timeoutMs: 30_000,
+  readiness: () => solanaReadable(),
+  async run(input) {
+    const extensions = await readMintExtensions(input.mint);
+    return { mint: input.mint, extensions, lines: renderMintExtensionLines(extensions) };
+  },
+});
+
 export function registerSolanaCapabilities(): void {
+  registerCapability(mintExtensions);
   registerCapability(health);
   registerCapability(account);
   registerCapability(balance);

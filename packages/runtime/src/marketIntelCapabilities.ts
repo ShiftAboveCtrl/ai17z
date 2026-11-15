@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { defineCapability, registerCapability } from '@xbam/tools';
+import { MintExtensionsOut, readMintExtensions } from './tokenExtensions';
 import {
   GECKO_FAMILY,
   JUPITER_FAMILY,
@@ -512,15 +513,28 @@ const solanaProfile = defineCapability({
   effect: 'READ',
   risk: 'LOW',
   input: z.object({ mint: z.string().trim().refine((v) => SOLANA_ADDRESS.test(v), IDENTITY_REFUSAL) }),
-  output: z.object({ found: z.boolean(), token: SolanaToken.nullable(), caveats: z.array(z.string()), provenance: ProvenanceOut }),
+  output: z.object({
+    found: z.boolean(),
+    token: SolanaToken.nullable(),
+    /**
+     * What the mint account itself says about Token-2022 extensions, read from the chain and not the index.
+     * Null when the index says the original Token program (nothing to read) or no token was found.
+     */
+    extensions: MintExtensionsOut.nullable(),
+    caveats: z.array(z.string()),
+    provenance: ProvenanceOut,
+  }),
   modelCallable: true,
-  timeoutMs: 20_000,
+  timeoutMs: 30_000,
   readiness: () => readable(JUPITER_FAMILY, 'The Solana token index'),
   async run(input) {
     const read = await readJupiter({ operation: 'search', query: input.mint });
     // A search can return similar tokens; only the exact mint is this one.
     const token = read.tokens.map(solanaTokenFrom).find((t) => t?.mint === input.mint) ?? null;
-    return { found: token !== null, token, caveats: SOLANA_CAVEATS, provenance: read.provenance };
+    // A bare "is it Token-2022" flag says nothing about a fee or a hook. When the program is not known
+    // to be the original one, the mint account is read and decoded. A failed read is `unread`, never a fee of zero.
+    const extensions = token && token.token2022 !== false ? await readMintExtensions(input.mint) : null;
+    return { found: token !== null, token, extensions, caveats: SOLANA_CAVEATS, provenance: read.provenance };
   },
 });
 

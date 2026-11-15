@@ -3,6 +3,7 @@ import { defineCapability, registerCapability } from '@xbam/tools';
 import type { CardReading } from '@xbam/prompts';
 import { solanaTokenFrom } from './marketIntelCapabilities';
 import { readDeployerHistory } from './deployerHistory';
+import { MintExtensionsOut, readMintExtensions } from './tokenExtensions';
 import {
   EVM_CHAINS,
   ask,
@@ -139,6 +140,8 @@ const inspectRisk = defineCapability({
       launchesFetchedAt: z.string().nullable(), launchesObservedAt: z.string().nullable(), launchesMaxAgeMs: z.number(),
       earlier: z.array(z.object({ mint: z.string(), liquidityNowUsd: z.number().nullable(),
         liquidityAtCreationUsd: z.number().nullable(), source: z.string(), readAt: z.string().nullable() })).max(5) }).optional(),
+    /** Solana only: the Token-2022 extensions the mint account carries. Beside the readings, never one of them. */
+    extensions: MintExtensionsOut.optional(),
   }),
   modelCallable: true,
   timeoutMs: 40_000,
@@ -164,9 +167,12 @@ const inspectRisk = defineCapability({
       // inside this one invocation so the card's reservation and caps already cover them.
       const deployer = await readDeployerHistory(input.address, { developer: token?.developer ?? null,
         developerLaunches: token?.developerLaunches ?? null, source, fetchedAt, observedAt });
+      // One more read of the mint account itself, for its Token-2022 extensions. It is not a card
+      // reading: the Studio picture is frozen at five labels, so the lines travel beside the readings.
+      const extensions = await readMintExtensions(input.address);
       return { chain: 'solana', chainId: null, address: input.address, observations: [], notChecked: [],
         limitations: ['Index readings can be wrong; holder accounts are not attributed ownership.'],
-        sourcesAnswering: token ? 1 : 0, cardReadings, deployer };
+        sourcesAnswering: token ? 1 : 0, cardReadings, deployer, extensions };
     }
     const chainId = EVM_CHAINS[input.chain];
     const query: TokenRiskQuery = { chainId, address: input.address };
