@@ -96,7 +96,7 @@ export interface SignalState {
  * `STUDIO_RISK_WATCH` and `PLAYBOOK` are both sources a sync recreates, so
  * neither can be switched off or removed by hand: the next tick would undo it.
  */
-export type RadarSourceProvenance = 'OWNER' | 'STUDIO_RISK_WATCH' | 'PLAYBOOK';
+export type RadarSourceProvenance = 'OWNER' | 'STUDIO_RISK_WATCH' | 'PLAYBOOK' | 'COIN_ALERTS';
 
 /**
  * Whether a config marks a Studio risk source: a present, non-null object.
@@ -112,8 +112,9 @@ export function hasStudioRiskMark(config: { studioRisk?: unknown } | null | unde
   return typeof mark === 'object' && mark !== null && !Array.isArray(mark);
 }
 
-export function radarSourceProvenance(config: { studioRisk?: unknown; playbookAgentId?: unknown } | null | undefined): RadarSourceProvenance {
+export function radarSourceProvenance(config: { studioRisk?: unknown; playbookAgentId?: unknown; coinAlertAgentId?: unknown } | null | undefined): RadarSourceProvenance {
   if (hasStudioRiskMark(config)) return 'STUDIO_RISK_WATCH';
+  if (config?.coinAlertAgentId != null) return 'COIN_ALERTS';
   // Present and not JSON null, as the playbook sync reads it with jsonb_typeof.
   return config?.playbookAgentId != null ? 'PLAYBOOK' : 'OWNER';
 }
@@ -149,6 +150,8 @@ export const RadarSourceConfig = z.object({
   /** Internal playbook source: the worker rotates exact mints from the current pin. */
   playbookAgentId: z.string().uuid().optional(),
   playbookPinId: z.string().uuid().optional(),
+  /** Internal coin alert source: the worker rotates the exact mints the owner opted in from Studio. */
+  coinAlertAgentId: z.string().uuid().optional(),
   /** Base gap between polls of this source. */
   intervalSeconds: z.number().int().min(20).max(86_400).default(180),
   /** Results pulled per poll. */

@@ -256,7 +256,11 @@
         "paperRecordWindow": "7d",
         "linkPaperRecord": false,
         "postTraderDna": false,
-        "traderDnaStudyId": null
+        "traderDnaStudyId": null,
+        "contributeChecks": false,
+        "postMostChecked": false,
+        "postReceiptsRecap": false,
+        "receiptsRecapImage": false
       }
     },
     "cadence": null,
