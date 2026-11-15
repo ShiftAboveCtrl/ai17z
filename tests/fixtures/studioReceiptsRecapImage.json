@@ -1,0 +1,31 @@
+{
+  "protocol": 1,
+  "window": { "start": "2026-11-08T12:00:00.000Z", "end": "2026-11-15T12:00:00.000Z" },
+  "n": 3,
+  "readings_taken": 2,
+  "changed": 1,
+  "unchanged": 1,
+  "without_reading": 1,
+  "rows": [
+    {
+      "chain": "solana", "address": "So11111111111111111111111111111111111111112", "predicate": "liquidity_below",
+      "posted_at": "2026-11-09T09:00:00.000Z",
+      "at_post": { "value": 50, "source": "solana_tokens.jupiter", "observed_at": "2026-11-09T08:59:40.000Z" },
+      "after_24h": { "value": 30, "source": "solana_tokens.jupiter", "observed_at": "2026-11-10T09:01:10.000Z", "state": "changed" }
+    },
+    {
+      "chain": "solana", "address": "So11111111111111111111111111111111111111112", "predicate": "concentration_above",
+      "posted_at": "2026-11-11T15:30:00.000Z",
+      "at_post": { "value": 60, "source": "solana_tokens.jupiter", "observed_at": "2026-11-11T15:29:50.000Z" },
+      "after_24h": { "value": 60, "source": "solana_tokens.jupiter", "observed_at": "2026-11-12T15:31:00.000Z", "state": "unchanged" }
+    },
+    {
+      "chain": "solana", "address": "So11111111111111111111111111111111111111112", "predicate": "liquidity_below",
+      "posted_at": "2026-11-14T10:00:00.000Z",
+      "at_post": { "value": 45, "source": "solana_tokens.jupiter", "observed_at": "2026-11-14T09:59:30.000Z" },
+      "after_24h": { "value": null, "source": null, "observed_at": null, "state": "not_read" }
+    }
+  ],
+  "disclaimer": "counts and readings only, not a verdict",
+  "requested_at": "2026-11-15T12:00:00.000Z"
+}

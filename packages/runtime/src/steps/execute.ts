@@ -65,6 +65,8 @@ import { capacityClassForEvent } from '../capacity';
 import { adapterContext } from '../channelContext';
 import { checkEvidenceCardAtSend } from '../evidenceCard';
 import { decidedEvidenceCardImage, prepareEvidenceCardImage } from '../evidenceCardImage';
+import { checkReceiptsRecapAtSend } from '../receiptsRecap';
+import { decidedReceiptsRecapImage, prepareReceiptsRecapImage } from '../receiptsRecapImage';
 
 /**
  * Sending it, and recording what happened.
@@ -238,6 +240,8 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
   await checkEvidenceCardAtSend(bundle, output);
   // After the send check, so the picture is drawn from the readings the approved text carries.
   await prepareEvidenceCardImage(bundle, output);
+  // A recap is checked against the figures it was written from, then offered a picture of them.
+  await prepareReceiptsRecapImage(bundle, await checkReceiptsRecapAtSend({ raw: bundle.event.payload, text: output, policy }));
   const paperReply = await paperReplyForJob(job.id);
   if (paperReply !== null && paperReply !== output) {
     throw PipelineError.review('paper_receipt_changed', 'The paper receipt changed after validation. Send the complete simulated record only.');
@@ -394,7 +398,7 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
     different post.
   */
   const mediaRefs = job.actionType === 'POST'
-    ? [...mediaRefsOf(bundle.event.payload), ...decidedPostMedia(bundle)]
+    ? [...mediaRefsOf(bundle.event.payload), ...decidedPostMedia(bundle), ...decidedReceiptsRecapImage(bundle)]
     : job.actionType === 'REPLY' ? decidedEvidenceCardImage(bundle) : [];
   const sendingVia = getChannelAdapter(job.channel);
   if (mediaRefs.length > 0 && !sendingVia.supportsMedia) {
