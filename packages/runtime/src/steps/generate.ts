@@ -450,6 +450,7 @@ export async function stepValidate(bundle: JobBundle): Promise<void> {
     // it actually read. Only that exact line is exempt from the address rule; a
     // model-written address, or any other address, is still held.
     evidenceCardOf(bundle)?.link ?? null,
+    evidenceCardOf(bundle)?.echo ?? null,
   );
   const blocking = result.violations.filter((v) => v.severity !== 'REPAIRED');
   if (evidenceCardOf(bundle) && result.output !== evidenceCardOf(bundle)!.text) {

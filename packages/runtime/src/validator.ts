@@ -226,6 +226,13 @@ export function validateOutput(
    * model happened to produce.
    */
   provenLink?: string | null,
+  /**
+   * The "read from your image: <address>" line the runtime wrote after reading
+   * a screenshot with the vision role and a strict address parse. Exempt only as
+   * that exact line, for the same reason as the link: it is shown so a misread
+   * is visible, and the same address anywhere else in the text is still held.
+   */
+  provenEcho?: string | null,
 ): ValidationResult {
   const violations: Violation[] = [];
   let output = raw.replace(/\r\n/g, '\n').trim();
@@ -356,8 +363,9 @@ export function validateOutput(
   // exact line is exempt. The same mint anywhere else, or any other address, is
   // still held, so a link the model wrote is caught exactly as before.
   const provenLine = provenLink ? `${CHECK_LINK_PREFIX}${provenLink}` : null;
-  const addressScan = provenLine
-    ? output.split('\n').filter((line) => line !== provenLine).join('\n')
+  const exempt = [provenLine, provenEcho].filter((line): line is string => Boolean(line));
+  const addressScan = exempt.length
+    ? output.split('\n').filter((line) => !exempt.includes(line)).join('\n')
     : output;
 
   for (const found of addressesIn(addressScan)) {

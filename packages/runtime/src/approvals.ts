@@ -47,7 +47,10 @@ export async function approveJob(input: ApprovalDecisionInput): Promise<void> {
   const persona = job.personaVersionId ? await agentsRepo.getPersonaVersion(job.personaVersionId) : null;
   const operatorText = [persona?.biography, persona?.customInstructions].filter(Boolean).join('\n');
 
-  const validation = validateOutput(proposed, policy, null, operatorText);
+  // The runtime-built lines of a sourced evidence card (the check page link, the
+  // "read from your image" echo) are the same exempt lines the pipeline passed.
+  const card = (job.resolvedContext?.meta as { evidenceCard?: { link?: string | null; echo?: string | null } } | undefined)?.evidenceCard;
+  const validation = validateOutput(proposed, policy, null, operatorText, card?.link ?? null, card?.echo ?? null);
   const hardFailure = validation.violations.find((v) => v.severity === 'REJECT');
   if (hardFailure) {
     throw new ConflictError(`This message cannot be approved: ${hardFailure.message}`, {
