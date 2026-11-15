@@ -214,6 +214,17 @@ describe('where it may go on the network', () => {
     );
   });
 
+  it('gives every release lookup a source, including the -Check preview', () => {
+    // `update-ai17z.ps1 -Check` runs the WhatIfOnly preview, which once called
+    // `Get-Ai17zRelease $Release` with no source: its URL came from `$null.Releases`
+    // and the preview always said nothing could be reached.
+    const calls = setup.match(/Get-Ai17zRelease\s+\$\w+(?:\s+\$\w+)?/g) ?? [];
+    expect(calls.length).toBeGreaterThan(1);
+    for (const call of calls) {
+      expect(call.trim().split(/\s+/).length, call).toBe(3);
+    }
+  });
+
   it('never treats a finished download as a checked one', () => {
     expect(setup).toContain('Get-FileHash');
     expect(setup).toMatch(/\$actual -ne \$expected\.Hash/);
