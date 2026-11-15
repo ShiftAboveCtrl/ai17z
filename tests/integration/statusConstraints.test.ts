@@ -7,6 +7,7 @@ import {
   PROVIDER_KINDS,
   TELEGRAM_OUTBOX_STATES,
   TRACE_EVENT_TYPES,
+  EVIDENCE_COMPARE_SIDES,
   EVIDENCE_FOLLOW_UP_STATES,
   TRADE_INTENT_STATUSES,
   TRADE_MODES,
@@ -46,6 +47,23 @@ it('persists evidence-card reservations with job foreign keys and nullable owner
   expect(row).toMatchObject({ card_job_id: jobId, watch_request: null, watch_confirmed: null });
   await expect(query(`INSERT INTO evidence_card_requests(job_id,agent_id,requester,chain,address,dry_run)
     VALUES('00000000-0000-4000-8000-000000000001',$1,'mock:reader','solana','example',true)`, [f.agentId])).rejects.toThrow(/foreign key/);
+});
+
+it('persists two reads of one comparison, one per side, and refuses a third side or an orphan', async () => {
+  const f = await createFixture();
+  const admitted = await ingestNormalizedEvent({ accountId: null, onlyAgentId: f.agentId, event: mockEvent('compare two tokens') });
+  const jobId = admitted.jobs[0]!.job.id;
+  const insert = (side: number, address: string, job = jobId) => query(`INSERT INTO evidence_compare_requests(job_id,side,agent_id,requester,chain,address,dry_run)
+    VALUES($1,$2,$3,'mock:reader','solana',$4,true)`, [job, side, f.agentId, address]);
+  // Every side the registry declares is accepted; anything else is refused.
+  for (const side of EVIDENCE_COMPARE_SIDES) await insert(side, `side-${side}-${uniqueSuffix()}`);
+  await query('DELETE FROM evidence_compare_requests WHERE job_id=$1', [jobId]);
+  await insert(0, 'So11111111111111111111111111111111111111112');
+  await insert(1, 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+  expect(await query('SELECT side FROM evidence_compare_requests WHERE job_id=$1 ORDER BY side', [jobId])).toEqual([{ side: 0 }, { side: 1 }]);
+  await expect(insert(1, 'again')).rejects.toThrow(/duplicate key/);
+  await expect(insert(2, 'third')).rejects.toThrow(/check constraint/);
+  await expect(insert(0, 'orphan', '00000000-0000-4000-8000-000000000001')).rejects.toThrow(/foreign key/);
 });
 
 it('accepts every evidence follow-up state, refuses an unknown one, and keeps one row per crossing and per observation', async () => {
