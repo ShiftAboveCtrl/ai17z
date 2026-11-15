@@ -1,0 +1,33 @@
+{
+  "contribution_batch": {
+    "protocol": 1,
+    "contributions": [
+      { "chain": "solana", "mint": "So11111111111111111111111111111111111111112", "bucket_start": "2026-11-14T09:00:00.000Z", "askers": 2 },
+      { "chain": "base", "mint": "0x4200000000000000000000000000000000000006", "bucket_start": "2026-11-14T10:00:00.000Z", "askers": 1 }
+    ]
+  },
+  "contribution_receipt": { "protocol": 1, "accepted": true },
+  "board": {
+    "protocol": 1,
+    "generated_at": "2026-11-15T08:00:00.000Z",
+    "window_hours": 24,
+    "min_askers": 3,
+    "rows": [
+      {
+        "chain": "solana",
+        "mint": "So11111111111111111111111111111111111111112",
+        "askers": 9,
+        "readings": [
+          { "label": "Liquidity", "value": 1250000, "unit": "USD", "source": "dexscreener", "observed_at": "2026-11-15T07:58:00.000Z" },
+          { "label": "Mint authority", "value": null, "unit": "authority", "source": "solana-rpc", "observed_at": null }
+        ]
+      },
+      {
+        "chain": "base",
+        "mint": "0x4200000000000000000000000000000000000006",
+        "askers": 4,
+        "readings": []
+      }
+    ]
+  }
+}
