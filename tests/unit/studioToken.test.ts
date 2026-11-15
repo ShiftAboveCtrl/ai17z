@@ -70,3 +70,14 @@ describe('$AI17Z self-awareness', () => {
     expect(checkTokenStatement('Bullish on the dip')).not.toEqual([]);
   });
 });
+
+describe('Studio token facts fixture parity', () => {
+  it('parses the exact document Studio publishes (copied from Studio tests/fixtures/token-facts.json)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const raw = JSON.parse(readFileSync(new URL('../fixtures/studioTokenFacts.json', import.meta.url), 'utf8'));
+    const parsed = TokenFactsDocument.parse(raw);
+    expect(parsed.token.address.toLowerCase()).toBe(AI17Z_PAYMENT.token.toLowerCase());
+    expect(parsed.token.chain_id).toBe(AI17Z_PAYMENT.chainId);
+    expect(parsed.observed_median_7d?.price_usd).toBe('0.0042');
+  });
+});
