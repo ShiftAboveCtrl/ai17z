@@ -1,5 +1,6 @@
 import { EvidenceCardControl } from '../../components/EvidenceCardControl';
 import { EvidenceCardLinkControl } from '../../components/EvidenceCardLinkControl';
+import { EvidenceCardImageControl } from '../../components/EvidenceCardImageControl';
 import { EvidenceFollowUpControl } from '../../components/EvidenceFollowUpControl';
 import { useEffect, useState } from 'react';
 import type { PolicyConfig } from '@app/lib/types';
@@ -443,6 +444,10 @@ export function PoliciesSection({
           <EvidenceCardLinkControl
             checked={draft.tools.evidenceCardLink}
             onChange={(v) => patch((n) => void (n.tools.evidenceCardLink = v))}
+          />
+          <EvidenceCardImageControl
+            checked={draft.tools.evidenceCardImage}
+            onChange={(v) => patch((n) => void (n.tools.evidenceCardImage = v))}
           />
           <EvidenceFollowUpControl
             checked={draft.tools.evidenceFollowUps}
