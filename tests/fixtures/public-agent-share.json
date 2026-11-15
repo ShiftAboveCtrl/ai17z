@@ -133,6 +133,7 @@
         "capabilityLoop": false,
         "evidenceCardImage": false,
         "evidenceCardLink": false,
+        "evidenceFollowUps": false,
         "evidenceCards": false,
         "research": {
           "web": true,

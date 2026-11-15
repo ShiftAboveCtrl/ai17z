@@ -7,6 +7,7 @@ import { capabilitySettings } from './capabilityPermissions';
 import { checkLinkUrl, linkedCheckOrigin, studioCheckLink } from './studioCheckLink';
 import { pauseState } from './killSwitch';
 import { evidenceCardRequest } from './research';
+import { checkEvidenceFollowUpAtSend } from './evidenceFollowUp';
 import { readPromo } from './promo';
 import type { JobBundle } from './loadJob';
 
@@ -204,6 +205,8 @@ async function rereadEvidenceCard(bundle: JobBundle, card: EvidenceCard): Promis
 export async function checkEvidenceCardAtSend(bundle: JobBundle, output: string): Promise<void> {
   const card = evidenceCardOf(bundle);
   if (!card) return;
+  // A follow-up is held to its own facts first; the capability and opt-in checks below still apply.
+  await checkEvidenceFollowUpAtSend(bundle, output);
   const current = await agents.getActivePolicy(bundle.agent.id);
   if (!PolicyConfig.parse(current?.config ?? {}).tools.evidenceCards || !(await permitted(bundle.agent.id))) {
     throw PipelineError.permanent('evidence_card_disabled', 'Token evidence replies or their capability were switched off.');

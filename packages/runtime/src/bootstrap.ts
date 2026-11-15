@@ -63,6 +63,7 @@ import { registerStudioVoiceCapabilities } from './studioVoiceCapabilities';
 import { registerStudioTraderDnaCapabilities } from './studioTraderDnaCapabilities';
 import { registerStudioHomeCapabilities } from './studioPublicHomeCapabilities';
 import { registerStudioLeagueCapabilities } from './studioLeagueCapabilities';
+import { registerStudioTokenCapabilities } from './studioToken';
 import { loadWalletAdapter } from './walletCore';
 
 const log = createLogger('bootstrap');
@@ -109,6 +110,8 @@ export async function bootstrapRuntime(): Promise<void> {
   registerPaperCapabilities();
   // The league standing, owner chat only and off until the owner enables it.
   registerStudioLeagueCapabilities();
+  // What $AI17Z is, sourced from Studio and read only when asked; off until the owner enables it.
+  registerStudioTokenCapabilities();
   registerActivityTapeCapability();
   await loadWalletAdapter();
   // What the owner's paper track record on Studio says. Owner chat only, and
