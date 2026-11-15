@@ -13,3 +13,6 @@ export const EVIDENCE_FOLLOW_UP_ORIGIN = 'evidence-follow-up';
 export function isEvidenceFollowUpEvent(payload: unknown): boolean {
   return (payload as { origin?: unknown } | null)?.origin === EVIDENCE_FOLLOW_UP_ORIGIN;
 }
+
+/** The two sides of a mint comparison, as stored in `evidence_compare_requests.side` (CHECK IN (0, 1)). */
+export const EVIDENCE_COMPARE_SIDES = [0, 1] as const;
