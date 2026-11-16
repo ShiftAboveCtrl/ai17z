@@ -62,6 +62,18 @@ describe('frozen evidence card image payload', () => {
     expect(evidenceCardImagePayload({ chain: 'solana', address: mint, readings: [{ ...readings[0]!, label: 'Verdict' }] })).toBeNull();
   });
 
+  it('leaves LP readings off the picture and still yields the frozen payload', () => {
+    const lp: CardReading[] = ['LP burned', 'LP locked', 'LP status'].map(label => ({
+      label, value: 10, unit: '%' as const, source: 'solana_lp', fetchedAt: '2026-11-14T11:59:30.000Z',
+      observedAt: '2026-11-14T11:59:20.000Z', maxAgeMs: 300_000,
+    }));
+    const payload = evidenceCardImagePayload({ chain: 'solana', address: mint, readings: [...readings, ...lp], now: new Date('2026-11-14T12:00:00.000Z') });
+    expect(payload).toEqual(fixture);
+    expect(payload?.readings.map(r => r.label)).toEqual(['Liquidity', 'Top holders', 'Mint authority', 'Freeze authority', 'Pool age']);
+    // A card made only of LP lines has nothing Studio can draw.
+    expect(evidenceCardImagePayload({ chain: 'solana', address: mint, readings: lp })).toBeNull();
+  });
+
   it('lowercases an EVM address so one token has one card', () => {
     const p = evidenceCardImagePayload({ chain: 'ethereum', address: '0xAbCdEf0123456789aBcDeF0123456789AbCdEf01', readings });
     expect(p?.address).toBe('0xabcdef0123456789abcdef0123456789abcdef01');

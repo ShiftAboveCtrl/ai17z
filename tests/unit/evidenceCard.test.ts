@@ -55,3 +55,11 @@ it('renders missing, stale, invalid and failed readings as unavailable without a
   expect(renderEvidenceCard([{ ...base, value: 0 }], '')).toContain('Liquidity: 0 USD');
 });
 
+it('prints an LP status line as unavailable when the reading has no value, and never as a verdict', () => {
+  const reading: CardReading = { label: 'LP status', value: null, unit: '%', source: 'solana_lp',
+    fetchedAt: new Date().toISOString(), observedAt: new Date().toISOString(), maxAgeMs: 300_000 };
+  const text = renderEvidenceCard([reading], '');
+  expect(text).toContain('LP status: unavailable');
+  expect(text).not.toMatch(/\b(?:safe|unruggable|rug|scam|safe LP)\b/i);
+});
+
