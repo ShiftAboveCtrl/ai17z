@@ -20,7 +20,7 @@ import {
   voice as voiceRepo,
 } from '@xbam/database';
 
-import { assemblePrompt, CHECK_LINK_PREFIX } from '@xbam/prompts';
+import { assemblePrompt } from '@xbam/prompts';
 import { habitualPhrases, lengthCeiling } from '@xbam/persona';
 import { runCapabilityLoop } from '../capabilityLoop';
 import { paperReplyForJob, paperReplyFromSteps } from '../paperCapabilities';
