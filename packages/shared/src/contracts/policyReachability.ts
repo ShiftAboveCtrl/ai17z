@@ -36,6 +36,7 @@ export const POLICY_REACHABILITY: Record<string, PolicyPlacement> = {
   'tools.evidenceCards': { where: 'EASY_AND_ADVANCED' },
   'tools.evidenceCardLink': { where: 'ADVANCED_ONLY' },
   'tools.evidenceCardImage': { where: 'ADVANCED_ONLY' },
+  'tools.holderMap': { where: 'ADVANCED_ONLY' },
   'tools.evidenceFollowUps': { where: 'ADVANCED_ONLY' },
   'automation.dryRunDefault': { where: 'EASY_AND_ADVANCED' },
   'automation.mode': { where: 'EASY_AND_ADVANCED' },
@@ -205,10 +206,14 @@ export const POLICY_REACHABILITY: Record<string, PolicyPlacement> = {
   // Advanced only and off: counting what people ask an agent about, and saying it in public, are owner decisions.
   'studio.contributeChecks': { where: 'ADVANCED_ONLY' },
   'studio.postMostChecked': { where: 'ADVANCED_ONLY' },
+  'studio.postNarrativePulse': { where: 'ADVANCED_ONLY' },
+  'studio.contributeNarrativeTerms': { where: 'ADVANCED_ONLY' },
   'studio.linkPaperRecord': { where: 'ADVANCED_ONLY' },
   'studio.paperRecordWindow': { where: 'ADVANCED_ONLY' },
   'studio.postPaperPnl': { where: 'ADVANCED_ONLY' },
   'studio.postPaperRecord': { where: 'ADVANCED_ONLY' },
+  'studio.postReceiptsRecap': { where: 'ADVANCED_ONLY' },
+  'studio.receiptsRecapImage': { where: 'ADVANCED_ONLY' },
   // Advanced only and off, for the same reason as the paper record: a public
   // post about a study of other people's wallets is a decision made on purpose.
   'studio.postTraderDna': { where: 'ADVANCED_ONLY' },

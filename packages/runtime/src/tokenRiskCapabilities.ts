@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { defineCapability, registerCapability } from '@xbam/tools';
 import type { CardReading } from '@xbam/prompts';
 import { solanaTokenFrom } from './marketIntelCapabilities';
+import { readDeployerHistory } from './deployerHistory';
 import { readLpForCard } from './lpLock';
 import {
   EVM_CHAINS,
@@ -133,6 +134,12 @@ const inspectRisk = defineCapability({
     cardReadings: z.array(z.object({ label: z.string(), value: z.union([z.number(), z.boolean()]).nullable(),
       unit: z.enum(['USD', '%', 'hours', 'authority']), source: z.string(), fetchedAt: z.string().nullable(),
       observedAt: z.string().nullable(), maxAgeMs: z.number() })),
+    /** Solana only: what the chain says created this mint. Absent for EVM chains. */
+    deployer: z.object({ address: z.string().nullable(), createdAt: z.string().nullable(), source: z.string(),
+      fetchedAt: z.string().nullable(), otherLaunches: z.number().nullable(), launchesSource: z.string(),
+      launchesFetchedAt: z.string().nullable(), launchesObservedAt: z.string().nullable(), launchesMaxAgeMs: z.number(),
+      earlier: z.array(z.object({ mint: z.string(), liquidityNowUsd: z.number().nullable(),
+        liquidityAtCreationUsd: z.number().nullable(), source: z.string(), readAt: z.string().nullable() })).max(5) }).optional(),
     lp: z.object({
       burnedPct: z.number().nullable(), lockedPct: z.number().nullable(), unlockAt: z.string().nullable(),
       source: z.string(), heldByContract: z.array(z.string()), unavailable: z.boolean(),
@@ -161,9 +168,13 @@ const inspectRisk = defineCapability({
       // Same card path as the other readings. A failed LP read is one unavailable line, not a failed card.
       const lpRead = await readLpForCard({ chain: 'solana', address: input.address, poolAddress: null });
       cardReadings.push(...lpRead.cardReadings);
+      // Two more reads of the same mint (its oldest signature and that transaction), kept
+      // inside this one invocation so the card's reservation and caps already cover them.
+      const deployer = await readDeployerHistory(input.address, { developer: token?.developer ?? null,
+        developerLaunches: token?.developerLaunches ?? null, source, fetchedAt, observedAt });
       return { chain: 'solana', chainId: null, address: input.address, observations: [], notChecked: [],
         limitations: ['Index readings can be wrong; holder accounts are not attributed ownership. An LP balance at a contract is not a lock unless its unlock time was read.'],
-        sourcesAnswering: token ? 1 : 0, cardReadings, lp: lpRead.lp };
+        sourcesAnswering: token ? 1 : 0, cardReadings, lp: lpRead.lp, deployer };
     }
     const chainId = EVM_CHAINS[input.chain];
     const query: TokenRiskQuery = { chainId, address: input.address };

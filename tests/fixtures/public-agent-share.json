@@ -135,6 +135,7 @@
         "evidenceCardLink": false,
         "evidenceFollowUps": false,
         "evidenceCards": false,
+        "holderMap": false,
         "research": {
           "web": true,
           "market": true,
@@ -258,7 +259,11 @@
         "postTraderDna": false,
         "traderDnaStudyId": null,
         "contributeChecks": false,
-        "postMostChecked": false
+        "postMostChecked": false,
+        "postNarrativePulse": false,
+        "contributeNarrativeTerms": false,
+        "postReceiptsRecap": false,
+        "receiptsRecapImage": false
       }
     },
     "cadence": null,

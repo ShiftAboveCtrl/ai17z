@@ -16,3 +16,4 @@ export {
   renderThreadState,
 } from './render';
 export * from './evidenceCard';
+export * from './holderMap';

@@ -2,6 +2,7 @@ import {
   ACCOUNT_STATUSES,
   CHECK_BOARD_CHAINS,
   EVIDENCE_COMPARE_SIDES,
+  EVIDENCE_MOVE_WINDOWS,
   EVIDENCE_FOLLOW_UP_STATES,
   APPROVAL_MODES,
   ACTION_STATUSES,
@@ -524,6 +525,7 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
     values: EVIDENCE_COMPARE_SIDES.map(String),
     note: 'An integer vocabulary: which mint of a two-mint comparison a read was for. Discovery reads bare integers in the ARRAY as their decimal text.',
   },
+  { table: 'evidence_move_requests', column: 'window', values: [...EVIDENCE_MOVE_WINDOWS] },
   { table: 'signal_receipts', column: 'status', values: SIGNAL_RECEIPT_STATUSES },
   { table: 'signal_receipts', column: 'verdict', values: SIGNAL_RECEIPT_VERDICTS },
   {

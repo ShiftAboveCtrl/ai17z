@@ -1,6 +1,7 @@
 import { EvidenceCardControl } from '../../components/EvidenceCardControl';
 import { EvidenceCardLinkControl } from '../../components/EvidenceCardLinkControl';
 import { EvidenceCardImageControl } from '../../components/EvidenceCardImageControl';
+import { HolderMapControl } from '../../components/HolderMapControl';
 import { EvidenceFollowUpControl } from '../../components/EvidenceFollowUpControl';
 import { useEffect, useState } from 'react';
 import type { PolicyConfig } from '@app/lib/types';
@@ -449,6 +450,10 @@ export function PoliciesSection({
             checked={draft.tools.evidenceCardImage}
             onChange={(v) => patch((n) => void (n.tools.evidenceCardImage = v))}
           />
+          <HolderMapControl
+            checked={draft.tools.holderMap}
+            onChange={(v) => patch((n) => void (n.tools.holderMap = v))}
+          />
           <EvidenceFollowUpControl
             checked={draft.tools.evidenceFollowUps}
             onChange={(v) => patch((n) => void (n.tools.evidenceFollowUps = v))}
@@ -508,6 +513,21 @@ export function PoliciesSection({
           </Field>
         </Group>
 
+        <Group title="Weekly receipts recap" blurb="Whether the agent may post a weekly recap of the radar signals it published. Counts and measured readings with their sources and times, never a win rate, profit or ranking.">
+          <Toggle
+            label="Let it post a weekly receipts recap"
+            description="Once a week it may write one post counting every radar signal it published in the last 7 days and what each stated reading was 24 hours later, with the sample size as n = a number. Drafts and dry runs are never counted. Needs the posting schedule running."
+            checked={draft.studio.postReceiptsRecap}
+            onChange={(v) => patch((n) => void (n.studio.postReceiptsRecap = v))}
+          />
+          <Toggle
+            label="Attach a picture of the recap from Studio"
+            description="Needs a linked Studio that serves the recap picture. Only the counts and readings in the post are sent, never a handle or post text. If Studio does not answer, the post goes out as text."
+            checked={draft.studio.receiptsRecapImage}
+            onChange={(v) => patch((n) => void (n.studio.receiptsRecapImage = v))}
+          />
+        </Group>
+
         {/*
           Off, and not offered by Easy Mode. A study is research about other
           people's wallets: the post may report what survived the luck filters,
@@ -543,6 +563,22 @@ export function PoliciesSection({
             description="It may write one post a day listing the tokens Studio says were checked most, ordered by count only, and saying they were checked, not endorsed. It gives no advice, and nothing is posted when Studio cannot be reached."
             checked={draft.studio.postMostChecked}
             onChange={(v) => patch((n) => void (n.studio.postMostChecked = v))}
+          />
+        </Group>
+
+        {/* Both off. It reuses posts the agent already read and reads nothing more from X. */}
+        <Group title="Talked about against checked" blurb="One daily post about the subjects the accounts your agent reads repeated most, set beside what people asked Studio to check. Talked about is not endorsed, and neither is checked.">
+          <Toggle
+            label="Let it post the daily pulse"
+            description="It uses posts your agent already read and never reads more. It leaves out subjects an agent does not raise on its own, anything naming a person and wording that looks copied across accounts, calls nothing rising without an earlier reading, and says so when Studio could not be reached."
+            checked={draft.studio.postNarrativePulse}
+            onChange={(v) => patch((n) => void (n.studio.postNarrativePulse = v))}
+          />
+          <Toggle
+            label="Share the subjects with Studio"
+            description="Sends Studio only a word, its share of the posts read, how many different accounts used it and the hour the window ended. Never an account, a handle or the words of a post. Separate from posting."
+            checked={draft.studio.contributeNarrativeTerms}
+            onChange={(v) => patch((n) => void (n.studio.contributeNarrativeTerms = v))}
           />
         </Group>
       </div>

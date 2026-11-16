@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { accounts, agents, cadences, capabilities, jobs, actions, query, observability, ops, capabilityPermissions } from '@xbam/database';
 import { DEFAULT_POLICY, defaultCadence, PolicyConfig, type ResolvedContext } from '@xbam/shared/contracts';
-import { renderEvidenceCard, type CardReading } from '@xbam/prompts';
+import { renderEvidenceCard, type CardReading, type DeployerHistory } from '@xbam/prompts';
 import { ingestNormalizedEvent } from '@xbam/runtime';
 import * as runtime from '@xbam/runtime';
 import { loadJobBundle } from '../../packages/runtime/src/loadJob';
@@ -20,6 +20,10 @@ let calls = 0;
 let stale = false;
 let unknown = false;
 let liquidity = 12000;
+const creator = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+let chainRead = false;
+let rpcMethods: string[] = [];
+import { resetDeployerCacheForTest } from '../../packages/runtime/src/deployerHistory';
 vi.mock('undici', () => ({
   Agent: class { async close() {} },
   fetch: async (input: unknown, init?: RequestInit) => {
@@ -28,19 +32,30 @@ vi.mock('undici', () => ({
       delete local.dispatcher;
       return globalThis.fetch(String(input), local);
     }
+    if (String(input).includes('api.mainnet-beta.solana.com')) {
+      if (!chainRead) throw new Error('Unexpected network host');
+      const { method } = JSON.parse(String(init?.body));
+      rpcMethods.push(method);
+      const result = method === 'getGenesisHash' ? '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
+        : method === 'getSignaturesForAddress' ? [{ signature: 'newer', err: null }, { signature: 'oldest', err: null }]
+        : { blockTime: Math.floor(Date.now() / 1000) - 7200, meta: { err: null, innerInstructions: [] },
+          transaction: { message: { accountKeys: [{ pubkey: creator, signer: true }],
+            instructions: [{ parsed: { type: 'initializeMint2', info: { mint } } }] } } };
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result }), { status: 200 });
+    }
     if (!String(input).includes('jup.ag')) throw new Error('Unexpected network host');
     calls++;
     const queried = new URL(String(input)).searchParams.get('query') ?? mint;
     if (unknown) return new Response(JSON.stringify([]), { status: 200 });
     return new Response(JSON.stringify([{ id: queried, liquidity, updatedAt: new Date(Date.now() - (stale ? 86400_000 : 0)).toISOString(),
-      firstPool: { createdAt: new Date(Date.now() - 3600_000).toISOString() },
-      audit: { topHoldersPercentage: 20, mintAuthorityDisabled: true, freezeAuthorityDisabled: false } }]), { status: 200 });
+      firstPool: { createdAt: new Date(Date.now() - 3600_000).toISOString() }, ...(chainRead ? { dev: creator } : {}),
+      audit: { topHoldersPercentage: 20, mintAuthorityDisabled: true, freezeAuthorityDisabled: false, ...(chainRead ? { devMints: 4 } : {}) } }]), { status: 200 });
   },
 }));
 
 beforeAll(async () => { await setupTestDatabase(); const r = await import('@xbam/runtime'); await r.bootstrapRuntime(); });
 afterAll(teardownTestDatabase);
-beforeEach(async () => { await truncateAll(); await seedCatalogue(); calls = 0; stale = false; unknown = false; liquidity = 12000;
+beforeEach(async () => { await truncateAll(); await seedCatalogue(); calls = 0; stale = false; unknown = false; liquidity = 12000; chainRead = false; rpcMethods = []; resetDeployerCacheForTest();
   const u = await import('@xbam/upstream'); u.resetCacheForTest(); u.resetLimiterForTest(); u.resetBreakerForTest(); });
 
 async function fixture(policy: Partial<PolicyConfig> = {}) {
@@ -199,13 +214,15 @@ it('a disabled capability and stranger watch text never read or create a watch',
 /** The card as it stood when the owner saw it, with readings already past the five minute bound. */
 async function ageApprovedCard(jobId: string): Promise<string> {
   const job = await jobs.requireJob(jobId);
-  const context = job.resolvedContext as ResolvedContext & { meta: { evidenceCard: { text: string; readings: CardReading[]; cardJobId: string | null } } };
+  const context = job.resolvedContext as ResolvedContext & { meta: { evidenceCard: { text: string; readings: CardReading[]; cardJobId: string | null; deployer: DeployerHistory | null } } };
   const seenAt = Date.now() - 6 * 60_000;
   const stamp = new Date(seenAt).toISOString();
   const readings = context.meta.evidenceCard.readings.map(reading => ({ ...reading, fetchedAt: stamp, observedAt: stamp }));
   const offer = context.meta.evidenceCard.text.split('\n').find(line => line.startsWith('Owner:')) ?? '';
-  const text = renderEvidenceCard(readings, offer, seenAt);
-  const resolvedContext = { ...context, meta: { ...context.meta, evidenceCard: { ...context.meta.evidenceCard, text, readings } } };
+  const before = context.meta.evidenceCard.deployer;
+  const aged = before && { ...before, launchesFetchedAt: stamp, launchesObservedAt: stamp };
+  const text = renderEvidenceCard(readings, offer, seenAt, '', aged);
+  const resolvedContext = { ...context, meta: { ...context.meta, evidenceCard: { ...context.meta.evidenceCard, text, readings, deployer: aged } } };
   await jobs.updateJob(jobId, { resolvedContext: resolvedContext as ResolvedContext, generatedOutput: text, validatedOutput: text });
   return text;
 }
@@ -349,4 +366,34 @@ it('holds a queued card for review when its link no longer matches the linked St
   await agents.savePolicyVersion(f.agentId, policy, 'link off', f.ownerId);
   await expect(stepExecute(await loadJobBundle(await jobs.requireJob(job.id)))).rejects.toThrow(/check page link/);
   await unlinkStudio();
+});
+
+it('adds the deployer read from the chain, with sources, and keeps every existing line', async () => {
+  chainRead = true;
+  const job = await ask(await fixture(), undefined, true);
+  const out = job.validatedOutput!;
+  expect(out).toMatch(new RegExp(`Deployer \\(creation fee payer\\): ${creator} \\[solana_mainnet\\.official; created \\d{4}-.+; fetched \\d{4}-`));
+  expect(out).toMatch(/Launches by this address, index count: 4 \[solana_tokens\.jupiter; fetched \d{4}-/);
+  expect(out).toContain('Liquidity: 12000 USD');
+  expect(out).toContain('not a verdict, reads can be wrong');
+  expect(out).not.toMatch(/\b(?:rug|scam|serial|dev dumped|safe|avoid)\b/i);
+  expect(rpcMethods.filter(m => m !== 'getGenesisHash')).toEqual(['getSignaturesForAddress', 'getTransaction']);
+  expect(await query('SELECT * FROM evidence_card_requests')).toHaveLength(1);
+});
+
+it('says unavailable, never zero, when the chain cannot be read, and the rest of the card stands', async () => {
+  const job = await ask(await fixture(), undefined, true);
+  expect(job.validatedOutput).toContain('Deployer (creation fee payer): unavailable');
+  expect(job.validatedOutput).toContain('Launches by this address, index count: unavailable');
+  expect(job.validatedOutput).toContain('Liquidity: 12000 USD');
+});
+
+it('leaves the deployer lines off rather than holding a card the length policy cannot fit', async () => {
+  chainRead = true;
+  const roomy = await ask(await fixture(), undefined, true);
+  const base = roomy.validatedOutput!.split('\n').filter(l => !/^(Deployer|Launches by)/.test(l)).join('\n');
+  const tight = await ask(await fixture({ output: { ...DEFAULT_POLICY.output, maxCharacters: base.length } }), `@agent check ${mint2}`, true);
+  expect(tight.status).toBe('DRY_RUN_COMPLETED');
+  expect(tight.validatedOutput).not.toContain('Deployer');
+  expect(tight.validatedOutput).toContain('Liquidity:');
 });

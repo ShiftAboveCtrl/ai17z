@@ -258,6 +258,15 @@ export const ToolPolicy = z.object({
    */
   evidenceCardImage: z.boolean().default(false),
   /**
+   * Answer "holder map" under a Solana token check with the largest holder accounts, joined where
+   * their first funding address is the same, as a picture drawn by the linked Studio and a text twin.
+   * Its own owner choice, separate from the card and from the card picture, off by default. It reads
+   * the chain under the card's own per-asker and per-mint caps, makes no X read, and says "a reading,
+   * not proof of one owner". When Studio is unlinked, slow or answers with anything that is not an
+   * image, the reply carries the text twin.
+   */
+  holderMap: z.boolean().default(false),
+  /**
    * Reply once in the card's own thread when an owner-confirmed risk watch on that card crosses.
    * Its own owner choice, off by default; it never creates a watch and never reads X.
    */
@@ -512,6 +521,29 @@ export const StudioPolicy = z.object({
    * was checked, not endorsed, orders by count only and gives no advice.
    */
   postMostChecked: z.boolean().default(false),
+  /**
+   * Let the agent put one daily "talked about against checked" post into the idea
+   * backlog: the subjects most distinct accounts it read repeated, by share of
+   * posts, beside what Studio says was checked. Off by default. It reuses posts
+   * already read, adds no read of X, drops subjects it will not raise unprompted
+   * and anything naming a person, and says talked about and checked are not endorsed.
+   */
+  postNarrativePulse: z.boolean().default(false),
+  /**
+   * Let this installation send Studio the subjects behind that pulse: a term, its
+   * share, how many distinct accounts used it and the hour the window ended. No
+   * author, handle or post text. Separate from posting and off by default.
+   */
+  contributeNarrativeTerms: z.boolean().default(false),
+  /**
+   * Let the agent put one weekly recap of the radar signals it published into the
+   * idea backlog: counts, and the reading it stated against the reading 24 hours
+   * later, with source and time. Never a win rate, a profit or loss or a ranking.
+   * Off by default; built only from published signals, never drafts or dry runs.
+   */
+  postReceiptsRecap: z.boolean().default(false),
+  /** Ask the linked Studio to draw the recap as a picture. Off by default; without it, or without Studio, the post is text only. */
+  receiptsRecapImage: z.boolean().default(false),
 });
 export type StudioPolicy = z.infer<typeof StudioPolicy>;
 

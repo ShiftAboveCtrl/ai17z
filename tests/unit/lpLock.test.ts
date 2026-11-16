@@ -240,7 +240,7 @@ describe('the LP lines on the card', () => {
   });
 
   it('keeps a proved contract line and still says the card is not a verdict', () => {
-    const text = renderEvidenceCard([reading('LP burned', 10), reading('LP locked', 0)], '', Date.now(), '', [`held by contract ${MINT}`]);
+    const text = renderEvidenceCard([reading('LP burned', 10), reading('LP locked', 0)], '', Date.now(), '', null, [], [`held by contract ${MINT}`]);
     expect(text).toContain(`held by contract ${MINT}`);
     expect(text).toContain('not a verdict, reads can be wrong');
   });

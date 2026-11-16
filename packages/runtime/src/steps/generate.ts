@@ -54,7 +54,8 @@ import { signalIdeaRefusal } from '../signalRadar';
 import { receiptIdeaRefusal } from '../radarReceipts';
 import { publicSelfFacts } from '../publicSelf';
 import { asksForPublicHome, publicHomeReply } from '../studioPublicHome';
-import { evidenceCardOf, lpLinesOf } from '../evidenceCard';
+import { deployerLinesOf, evidenceCardOf, lpLinesOf } from '../evidenceCard';
+import { transactionAddresses } from '../transactionReading';
 
 import { classifyEvidence } from '../evidenceClass';
 
@@ -449,10 +450,11 @@ export async function stepValidate(bundle: JobBundle): Promise<void> {
     // The check page link the runtime built from the linked Studio and the mint
     // it actually read. Only that exact line is exempt from the address rule; a
     // model-written address, or any other address, is still held.
-    [
-      ...(evidenceCardOf(bundle)?.linkLines?.length ? evidenceCardOf(bundle)!.linkLines! : evidenceCardOf(bundle)?.link ? [`${CHECK_LINK_PREFIX}${evidenceCardOf(bundle)!.link}`] : []),
-      ...lpLinesOf(evidenceCardOf(bundle)),
-    ],
+    evidenceCardOf(bundle)?.linkLines?.length ? evidenceCardOf(bundle)!.linkLines! : evidenceCardOf(bundle)?.link ?? null,
+    // A transaction reading prints the program addresses the node returned.
+    evidenceCardOf(bundle)?.tx ? transactionAddresses(evidenceCardOf(bundle)!.tx!) : null,
+    // The deployer lines carry addresses the card's own capability read from the chain.
+    [...(deployerLinesOf(evidenceCardOf(bundle)) ?? []), ...lpLinesOf(evidenceCardOf(bundle)), ...(evidenceCardOf(bundle)?.echo ? [evidenceCardOf(bundle)!.echo!] : [])],
   );
   const blocking = result.violations.filter((v) => v.severity !== 'REPAIRED');
   if (evidenceCardOf(bundle) && result.output !== evidenceCardOf(bundle)!.text) {

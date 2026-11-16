@@ -249,8 +249,8 @@ export async function proposeMostCheckedPost(agentId: string, now: Date = new Da
 // The check on the finished text
 // ---------------------------------------------------------------------------
 
-const ADVICE = /\b(buy|sell|ape|aping|aped|hold|hodl|long|short|moon\w*|gems?|pumps?|bullish|bearish|safe|legit|trust\w*|recommend\w*|endorse[sd]?|worth|undervalued|best|top pick|winners?|must|should|dyor)\b/i;
-const ADDRESS = /\b0x[0-9a-fA-F]{40}\b|\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/g;
+export const ADVICE_WORDS = /\b(buy|sell|ape|aping|aped|hold|hodl|long|short|moon\w*|gems?|pumps?|bullish|bearish|safe|legit|trust\w*|recommend\w*|endorse[sd]?|worth|undervalued|best|top pick|winners?|must|should|dyor)\b/i;
+export const ADDRESS_PATTERN = /\b0x[0-9a-fA-F]{40}\b|\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/g;
 const NOT_ENDORSED = /not\s+endorsed/i;
 const CHECKED = /\bchecked\b/i;
 
@@ -260,11 +260,11 @@ export function checkMostCheckedText(text: string, facts: string): string[] {
   if (!CHECKED.test(text) || !NOT_ENDORSED.test(text)) problems.push('It does not say the tokens were checked, not endorsed.');
   // "not endorsed" is the one place a negated endorsement word is fine; the rest is held to the advice list.
   const withoutFraming = text.replace(/not\s+endorsed/gi, '').replace(/\bchecked\b/gi, '');
-  const advice = ADVICE.exec(withoutFraming);
+  const advice = ADVICE_WORDS.exec(withoutFraming);
   if (advice) problems.push(`It reads as advice or a verdict ("${advice[0]}").`);
   if (FORWARD_LOOKING.test(text)) problems.push('It reads as a promise, a signal or advice about what comes next.');
-  const known = new Set((facts.match(ADDRESS) ?? []).map((a) => a.toLowerCase()));
-  const stray = (text.match(ADDRESS) ?? []).find((a) => !known.has(a.toLowerCase()));
+  const known = new Set((facts.match(ADDRESS_PATTERN) ?? []).map((a) => a.toLowerCase()));
+  const stray = (text.match(ADDRESS_PATTERN) ?? []).find((a) => !known.has(a.toLowerCase()));
   if (stray) problems.push('It names an address that is not on the board.');
   if (/@[A-Za-z0-9_]{1,15}\b/.test(text)) problems.push('It names an account.');
   return problems;
@@ -285,6 +285,6 @@ export async function checkMostCheckedAtSend(input: { raw: unknown; text: string
   const read = await readCheckBoard(input.now);
   if (!read.ok) throw PipelineError.retryable('most_checked_studio_unreachable', `Nothing was posted: ${read.why}`, { retryAfterMs: 15 * 60_000 });
   const listed = new Set(digestRows(read.board).map((row) => row.mint.toLowerCase()));
-  const stale = (input.text.match(ADDRESS) ?? []).find((a) => !listed.has(a.toLowerCase()));
+  const stale = (input.text.match(ADDRESS_PATTERN) ?? []).find((a) => !listed.has(a.toLowerCase()));
   if (stale) throw PipelineError.review('most_checked_changed', 'The board no longer lists a token this post names. Generate a fresh post.');
 }

@@ -9,7 +9,9 @@ export const TINY_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcS
 export async function cardImageStudioServer(key: InstallationKey) {
   const seen = new Set<string>();
   const requests: { method: string; path: string; valid: boolean; body: string }[] = [];
-  const state = { mode: 'png' as 'png' | 'html' | 'status500' | 'slow' | 'svg' };
+  // `mapMode` overrides `mode` for the second payload kind (`holder-map`) only, so a test can have the
+  // card picture arrive while the map's fails, or the other way round.
+  const state = { mode: 'png' as 'png' | 'html' | 'status500' | 'slow' | 'svg', mapMode: null as null | 'png' | 'html' | 'status500' | 'slow' | 'svg' };
   let origin = '';
   const server = createServer(async (req, res) => {
     const json = (status: number, body: unknown) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
@@ -31,17 +33,23 @@ export async function cardImageStudioServer(key: InstallationKey) {
       seen.add(claims.jti);
       if (token) return json(200, { access_token: 'card-image-token', expires_in: 300 });
       if (req.method !== 'POST' || req.url !== '/api/v1/installation/evidence-card-image') return json(404, {});
-      if (state.mode === 'status500') return json(500, {});
-      if (state.mode === 'html') { res.writeHead(200, { 'content-type': 'image/png' }); return res.end('<html>not a picture</html>'); }
-      if (state.mode === 'svg') { res.writeHead(200, { 'content-type': 'image/svg+xml' }); return res.end('<svg xmlns="http://www.w3.org/2000/svg"/>'); }
-      if (state.mode === 'slow') { await new Promise(r => setTimeout(r, 15_000)); return json(200, {}); }
+      const kind = (() => { try { return JSON.parse(Buffer.concat(chunks).toString()).kind; } catch { return undefined; } })();
+      const mode = kind === 'holder-map' && state.mapMode ? state.mapMode : state.mode;
+      if (mode === 'status500') return json(500, {});
+      if (mode === 'html') { res.writeHead(200, { 'content-type': 'image/png' }); return res.end('<html>not a picture</html>'); }
+      if (mode === 'svg') { res.writeHead(200, { 'content-type': 'image/svg+xml' }); return res.end('<svg xmlns="http://www.w3.org/2000/svg"/>'); }
+      if (mode === 'slow') { await new Promise(r => setTimeout(r, 15_000)); return json(200, {}); }
       res.writeHead(200, { 'content-type': 'image/png' });
       res.end(TINY_PNG);
     } catch { json(422, {}); }
   });
   origin = `http://127.0.0.1:${await listenReachable(server)}`;
   return { origin, state, requests,
+    /** Every request to the image path, whatever its kind. */
     imageRequests: () => requests.filter(r => r.path === '/api/v1/installation/evidence-card-image'),
+    /** Only the second payload kind. The card's own payload carries no `kind`. */
+    holderMapRequests: () => requests.filter(r => r.path === '/api/v1/installation/evidence-card-image' && JSON.parse(r.body).kind === 'holder-map'),
+    cardRequests: () => requests.filter(r => r.path === '/api/v1/installation/evidence-card-image' && JSON.parse(r.body).kind === undefined),
     close: () => new Promise<void>((resolve, reject) => { server.closeAllConnections?.(); server.close(error => error ? reject(error) : resolve()); }),
   };
 }
