@@ -6,7 +6,7 @@ import {
 } from '@xbam/database';
 import { rankBridges, scoreBridge, type BridgeScore } from './bridge';
 import { findOpportunities, type OpportunityCandidate, type OpportunityVerdict } from './opportunity';
-import { readNarratives, type NarrativeReading } from './narratives';
+import { readNarratives, type NarrativePost, type NarrativeReading } from './narratives';
 import { readContentSignals, type ContentSignals, type PublishedPost } from './contentIntelligence';
 import { readLaunchSignals, type LaunchReading } from './launches';
 
@@ -51,11 +51,25 @@ export async function contentSignalsFor(
   return readContentSignals(posts, { hourBuckets: options.hourBuckets ?? true });
 }
 
-/** What a lot of accounts have started talking about, from what was discovered. */
-export async function narrativesFor(
+/**
+ * The posts the radar already read, with what was made of them.
+ *
+ * The posts are kept beside the reading because the narrative pulse has to look
+ * at who said a subject (a coordination check) without asking X for anything:
+ * these are rows the radar stored for its own work, so this adds no read and
+ * spends nothing from the read budget.
+ */
+export interface NarrativeWork {
+  reading: NarrativeReading;
+  posts: NarrativePost[];
+  windowHours: number;
+  now: Date;
+}
+
+export async function narrativeWorkFor(
   accountId: string,
   options: { windowHours?: number; now?: Date; limit?: number } = {},
-): Promise<NarrativeReading> {
+): Promise<NarrativeWork> {
   const now = options.now ?? new Date();
   const windowHours = options.windowHours ?? DEFAULT_WINDOW_HOURS;
   // Twice the window, because a rise needs a before to have risen from.
@@ -63,18 +77,25 @@ export async function narrativesFor(
     sinceIso: isoHoursAgo(windowHours * 2, now),
     limit: 600,
   });
-  return readNarratives(
-    rows.map((row) => ({
-      statusId: row.remote_event_id,
-      handle: row.handle ?? '',
-      // Present for anything the radar read through the canonical layer, so
-      // "how many accounts are saying this" counts people rather than names.
-      ...(row.author_id ? { authorId: row.author_id } : {}),
-      text: row.text,
-      ...(row.occurred_at ? { postedAt: row.occurred_at } : {}),
-    })),
-    { now, windowHours, ...(options.limit ? { limit: options.limit } : {}) },
-  );
+  const posts: NarrativePost[] = rows.map((row) => ({
+    statusId: row.remote_event_id,
+    handle: row.handle ?? '',
+    // Present for anything the radar read through the canonical layer, so
+    // "how many accounts are saying this" counts people rather than names.
+    ...(row.author_id ? { authorId: row.author_id } : {}),
+    text: row.text,
+    ...(row.occurred_at ? { postedAt: row.occurred_at } : {}),
+  }));
+  const reading = readNarratives(posts, { now, windowHours, ...(options.limit ? { limit: options.limit } : {}) });
+  return { reading, posts, windowHours, now };
+}
+
+/** What a lot of accounts have started talking about, from what was discovered. */
+export async function narrativesFor(
+  accountId: string,
+  options: { windowHours?: number; now?: Date; limit?: number } = {},
+): Promise<NarrativeReading> {
+  return (await narrativeWorkFor(accountId, options)).reading;
 }
 
 /** Tickers and addresses being posted, with the posts they were seen in. */

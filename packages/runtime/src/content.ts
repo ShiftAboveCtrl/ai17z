@@ -3,6 +3,7 @@ import { content as contentRepo, type IdeaRow } from '@xbam/database';
 import { signalIdeaRefusal } from './signalRadar';
 import { receiptIdeaRefusal } from './radarReceipts';
 import { MOST_CHECKED_IDEA_SOURCE } from './studioCheckBoard';
+import { NARRATIVE_PULSE_IDEA_SOURCE } from './narrativePulse';
 
 const log = createLogger('content');
 
@@ -183,6 +184,11 @@ export async function nextPost(agentId: string, accountId: string | null = null)
   if (idea.source === MOST_CHECKED_IDEA_SOURCE) lines.push(
     '',
     'This is a count of what people asked to have checked, never a view on the tokens. Say they were checked, not endorsed. Keep the order given and use only the addresses supplied. No advice, no prediction, no verdict, no account names.',
+  );
+
+  if (idea.source === NARRATIVE_PULSE_IDEA_SOURCE) lines.push(
+    '',
+    'This is a count of words the accounts you read shared and of what people asked to have checked, never a view on any subject or token. Say talked about and checked are not endorsed. Keep the order given (share of posts) and the sample sizes. Call nothing rising unless the facts say rising. Use only the terms and addresses supplied. If the checks half was not read, say so. No advice, no prediction, no verdict, no account or person names, no quotes from posts.',
   );
 
   if (idea.source === 'conversation' && idea.sourceHandle) {

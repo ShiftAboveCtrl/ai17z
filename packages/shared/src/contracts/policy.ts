@@ -522,6 +522,20 @@ export const StudioPolicy = z.object({
    */
   postMostChecked: z.boolean().default(false),
   /**
+   * Let the agent put one daily "talked about against checked" post into the idea
+   * backlog: the subjects most distinct accounts it read repeated, by share of
+   * posts, beside what Studio says was checked. Off by default. It reuses posts
+   * already read, adds no read of X, drops subjects it will not raise unprompted
+   * and anything naming a person, and says talked about and checked are not endorsed.
+   */
+  postNarrativePulse: z.boolean().default(false),
+  /**
+   * Let this installation send Studio the subjects behind that pulse: a term, its
+   * share, how many distinct accounts used it and the hour the window ended. No
+   * author, handle or post text. Separate from posting and off by default.
+   */
+  contributeNarrativeTerms: z.boolean().default(false),
+  /**
    * Let the agent put one weekly recap of the radar signals it published into the
    * idea backlog: counts, and the reading it stated against the reading 24 hours
    * later, with source and time. Never a win rate, a profit or loss or a ranking.

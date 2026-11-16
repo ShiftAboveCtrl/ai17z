@@ -206,6 +206,8 @@ export const POLICY_REACHABILITY: Record<string, PolicyPlacement> = {
   // Advanced only and off: counting what people ask an agent about, and saying it in public, are owner decisions.
   'studio.contributeChecks': { where: 'ADVANCED_ONLY' },
   'studio.postMostChecked': { where: 'ADVANCED_ONLY' },
+  'studio.postNarrativePulse': { where: 'ADVANCED_ONLY' },
+  'studio.contributeNarrativeTerms': { where: 'ADVANCED_ONLY' },
   'studio.linkPaperRecord': { where: 'ADVANCED_ONLY' },
   'studio.paperRecordWindow': { where: 'ADVANCED_ONLY' },
   'studio.postPaperPnl': { where: 'ADVANCED_ONLY' },

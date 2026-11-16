@@ -260,6 +260,8 @@
         "traderDnaStudyId": null,
         "contributeChecks": false,
         "postMostChecked": false,
+        "postNarrativePulse": false,
+        "contributeNarrativeTerms": false,
         "postReceiptsRecap": false,
         "receiptsRecapImage": false
       }
