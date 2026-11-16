@@ -104,8 +104,12 @@ export async function setStudioRiskWatches(input: { agentId: string; ownerId: st
   const ready = await studioLinkedContext();
   if (input.enabled && 'ok' in ready) return ready;
   await withTransaction(async tx => {
-    await tx.one('SELECT id FROM agents WHERE id=$1 FOR UPDATE', [input.agentId]);
-    const old = await tx.one<Binding>('SELECT * FROM studio_risk_bindings WHERE agent_id=$1 FOR UPDATE', [input.agentId]);
+    // NO KEY UPDATE still queues every other change for this agent, but not a foreign-key check on
+    // agents.id: a poll holding this agent's source row records a crossing (an idea, a candidate, a
+    // follow-up, each a KEY SHARE on the agent) while this waits to disable that same source, and
+    // FOR UPDATE made the two wait on each other until Postgres ended one as "deadlock detected".
+    await tx.one('SELECT id FROM agents WHERE id=$1 FOR NO KEY UPDATE', [input.agentId]);
+    const old =await tx.one<Binding>('SELECT * FROM studio_risk_bindings WHERE agent_id=$1 FOR UPDATE', [input.agentId]);
     if (old) await tx.query(`UPDATE radar_sources s SET enabled=false,status='DISABLED',updated_at=now() WHERE ${sourceScope}=$1`, [old.id]);
     if ('ok' in ready) {
       await tx.query('UPDATE studio_risk_bindings SET enabled=false,updated_at=now() WHERE agent_id=$1', [input.agentId]);
