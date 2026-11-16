@@ -2,11 +2,12 @@ import { agents, capabilityInvocations, jobs, observability, query, withTransact
 import { createLogger, PipelineError } from '@xbam/shared';
 import { MediaInventory, PolicyConfig, type ResolvedContext } from '@xbam/shared/contracts';
 import { getCapability, invokeCapability, resolvePermission } from '@xbam/tools';
-import { CHECK_LINK_PREFIX, COMPARE_LINK_PREFIXES, renderDeployerLines, renderEvidenceCard, renderEvidenceCompare, renderEvidenceMove, shortAddress, type CardReading, type DeployerHistory, type MoveReport } from '@xbam/prompts';
+import { CHECK_LINK_PREFIX, COMPARE_LINK_PREFIXES, renderDeployerLines, renderEvidenceCard, renderEvidenceCompare, renderEvidenceMove, renderTransactionReading, shortAddress, type CardReading, type DeployerHistory, type MoveReport, type TransactionReport } from '@xbam/prompts';
 import { capabilitySettings } from './capabilityPermissions';
 import { checkLinkUrl, linkedCheckOrigin, studioCheckLink } from './studioCheckLink';
 import { pauseState } from './killSwitch';
-import { evidenceCardRequest, evidenceCompareRequest, evidenceMoveRequest } from './research';
+import { evidenceCardRequest, evidenceCompareRequest, evidenceMoveRequest, explainTransactionRequest } from './research';
+import { readTransactionReport, transactionCurrent } from './transactionReading';
 import { moveCurrent, readMintWindow } from './mintMovement';
 import { readAddressesFromImage } from './mediaResolve';
 import { parseTokenReference } from './token';
@@ -29,6 +30,8 @@ export interface EvidenceCard {
   text: string; readings: CardReading[]; cardJobId: string | null; link?: string | null;
   /** A "why is it moving" reply: the measured report its text was rendered from. */
   move?: MoveReport;
+  /** An "explain this transaction" reply: the reading its text was rendered from. */
+  tx?: TransactionReport;
   compare?: { chain: string; sides: [CompareCardSide, CompareCardSide]; links: [string | null, string | null] };
   linkLines?: string[];
   deployer?: DeployerHistory | null;
@@ -374,7 +377,104 @@ async function checkMoveAtSend(bundle: JobBundle, card: EvidenceCard & { move: M
   }
 }
 
-const COMPARE_COOLING = 'One of these tokens was read a moment ago. Ask again in a minute; no new read was made.';
+const TX_CAP = 'solana.read_transaction';
+const TX_READS = 2;
+
+/**
+ * "What did this transaction do" about one exact signature: what the node
+ * returned, rendered by a template, with no model writing any of it.
+ *
+ * It follows the movement path's shape: the same direct-invitation gate, the
+ * same evidence switch (`tools.evidenceCards`, off by default), the capability
+ * permission of `solana.read_transaction`, the research budget, a per-asker
+ * hourly cap counted in reads, and a cooldown that reuses a recent answer for the
+ * same signature instead of reading again. The result is an ordinary card on the
+ * job, so reticence, exchange limits, cadence, quiet hours, pause and dry run
+ * apply downstream unchanged. It reads the cluster only: no X read is made, and
+ * nothing is signed or built.
+ */
+export async function researchEvidenceTransaction(bundle: JobBundle): Promise<boolean> {
+  if (!bundle.policy.tools.evidenceCards || bundle.job.actionType !== 'REPLY' ||
+      !['MENTION', 'REPLY'].includes(bundle.event.type)) return false;
+  const context = bundle.job.resolvedContext;
+  if (!context) return false;
+  const request = explainTransactionRequest(context.incomingText);
+  if (!request) return false;
+  if (evidenceCardOf(bundle)) return true;
+  // Hostility is met by the ordinary reply, which deflects; nothing is read for it.
+  if ((context.meta as { intent?: { intent?: string } })?.intent?.intent === 'DEFLECT') return false;
+  let text = request.refusal ?? '';
+  let tx: TransactionReport | undefined;
+  let cardJobId: string | null = null;
+  if (!text && 'signature' in request) {
+    const signature = request.signature;
+    const budget = bundle.policy.budget.maxResearchCallsPerEvent;
+    if (!(await permitted(bundle.agent.id, TX_CAP))) {
+      text = 'Transaction readings are unavailable under the current capability permissions.';
+    } else if (budget === 0) {
+      text = 'Transaction readings are unavailable because research is disabled.';
+    } else {
+      const requester = `${bundle.job.channel}:${bundle.event.remoteAuthorId ?? bundle.event.remoteAuthorHandle ?? 'unknown'}`;
+      const reserved = await withTransaction(async db => {
+        await db.one('SELECT id FROM agents WHERE id=$1 FOR UPDATE', [bundle.agent.id]);
+        const prior = await db.one('SELECT card_job_id FROM evidence_transaction_requests WHERE job_id=$1', [bundle.job.id]);
+        if (prior) return { kind: 'ok' as const, card: prior.card_job_id as string | null };
+        const spent = await db.one(`SELECT coalesce(sum(reads), 0)::int AS n FROM evidence_transaction_requests
+          WHERE agent_id=$1 AND requester=$2 AND created_at>now()-interval '1 hour' AND dry_run=$3`, [bundle.agent.id, requester, bundle.job.dryRun]);
+        if (Number(spent?.n) + TX_READS > HOURLY_CAP) return { kind: 'capped' as const };
+        const previous = await db.one(`SELECT job_id FROM evidence_transaction_requests
+          WHERE agent_id=$1 AND signature=$2 AND dry_run=$3 AND card_job_id=job_id
+            AND created_at>now()-($4::int * interval '1 millisecond') ORDER BY created_at DESC LIMIT 1`,
+        [bundle.agent.id, signature, bundle.job.dryRun, COOLDOWN_MS]);
+        const card = (previous?.job_id as string | undefined) ?? bundle.job.id;
+        await db.query(`INSERT INTO evidence_transaction_requests(job_id,agent_id,requester,signature,reads,dry_run,card_job_id)
+          VALUES($1,$2,$3,$4,$5,$6,$7)`, [bundle.job.id, bundle.agent.id, requester, signature, previous ? 0 : Math.min(TX_READS, budget),
+          bundle.job.dryRun, card]);
+        return { kind: 'ok' as const, card };
+      });
+      if (reserved.kind === 'capped') text = 'The hourly transaction reading limit for this asker has been reached.';
+      else {
+        cardJobId = reserved.card;
+        if (cardJobId !== bundle.job.id) {
+          const [published] = await query(`SELECT remote_action_url FROM actions WHERE job_id=$1 AND status='EXECUTED' AND NOT dry_run ORDER BY executed_at LIMIT 1`, [cardJobId]);
+          const url = published?.remote_action_url;
+          text = `Recent reading: ${typeof url === 'string' && /^(https?:|mock:)/.test(url) ? url : `card ${cardJobId?.slice(0, 8)} is pending`}. Reads can be wrong; no new read was made.`;
+        } else {
+          const read = await readTransactionReport({ signature, maxCharacters: bundle.policy.output.maxCharacters, maxReads: Math.min(TX_READS, budget) });
+          await query('UPDATE evidence_transaction_requests SET reads=$2 WHERE job_id=$1', [bundle.job.id, read.reads]);
+          if (read.report && read.text) { tx = read.report; text = read.text; }
+          else text = read.failure ?? 'Transaction evidence unavailable; evidence not found. This is not a verdict, reads can be wrong.';
+        }
+      }
+    }
+  }
+  const evidenceCard: EvidenceCard = { text, readings: [], cardJobId, link: null, tx };
+  const research = { findings: [{ kind: 'token', query: 'signature' in request ? request.signature : 'transaction', source: TX_CAP,
+    title: 'Transaction reading', summary: text, url: null, retrievedAt: new Date().toISOString() }], failed: [], note: 'Deterministic transaction reading.' };
+  const resolvedContext = { ...context, meta: { ...context.meta, evidenceCard, research } };
+  await jobs.updateJob(bundle.job.id, { resolvedContext });
+  bundle.job.resolvedContext = resolvedContext;
+  await observability.emitTrace({ jobId: bundle.job.id, agentId: bundle.agent.id, type: 'RESEARCH_DONE',
+    message: research.note, data: { capability: TX_CAP, transaction: true, cardJobId } });
+  return true;
+}
+
+/**
+ * The send check for a transaction reply: current owner switch and permission,
+ * the text exactly what its stored reading renders, and a reading still current.
+ * A stale one is not refreshed here; asking again is a fresh ask under the caps.
+ */
+async function checkTransactionAtSend(bundle: JobBundle, card: EvidenceCard & { tx: TransactionReport }, output: string): Promise<void> {
+  const current = await agents.getActivePolicy(bundle.agent.id);
+  if (!PolicyConfig.parse(current?.config ?? {}).tools.evidenceCards || !(await permitted(bundle.agent.id, TX_CAP))) {
+    throw PipelineError.permanent('evidence_card_disabled', 'Token evidence replies or their capability were switched off.');
+  }
+  if (output !== card.text || renderTransactionReading(card.tx) !== card.text || !transactionCurrent(card.tx)) {
+    throw PipelineError.review('evidence_card_changed', 'The transaction reading changed or expired. Ask again for a fresh reading.');
+  }
+}
+
+const COMPARE_COOLING ='One of these tokens was read a moment ago. Ask again in a minute; no new read was made.';
 const ADDRESS_SHAPES = /\b(?:0x[a-fA-F0-9]{6,}|[1-9A-HJ-NP-Za-km-z]{32,44})\b/g;
 
 function compareLines(links: readonly (string | null)[]): string[] {
@@ -620,6 +720,7 @@ export async function checkEvidenceCardAtSend(bundle: JobBundle, output: string)
   // A follow-up is held to its own facts first; the capability and opt-in checks below still apply.
   await checkEvidenceFollowUpAtSend(bundle, output);
   if (card.move) return checkMoveAtSend(bundle, { ...card, move: card.move }, output);
+  if (card.tx) return checkTransactionAtSend(bundle, { ...card, tx: card.tx }, output);
   if (card.compare || card.linkLines) return checkCompareAtSend(bundle, card, output);
   const current = await agents.getActivePolicy(bundle.agent.id);
   if (!PolicyConfig.parse(current?.config ?? {}).tools.evidenceCards || !(await permitted(bundle.agent.id))) {

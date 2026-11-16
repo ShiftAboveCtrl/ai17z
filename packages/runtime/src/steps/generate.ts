@@ -55,6 +55,7 @@ import { receiptIdeaRefusal } from '../radarReceipts';
 import { publicSelfFacts } from '../publicSelf';
 import { asksForPublicHome, publicHomeReply } from '../studioPublicHome';
 import { deployerLinesOf, evidenceCardOf } from '../evidenceCard';
+import { transactionAddresses } from '../transactionReading';
 
 import { classifyEvidence } from '../evidenceClass';
 
@@ -450,6 +451,8 @@ export async function stepValidate(bundle: JobBundle): Promise<void> {
     // it actually read. Only that exact line is exempt from the address rule; a
     // model-written address, or any other address, is still held.
     evidenceCardOf(bundle)?.linkLines?.length ? evidenceCardOf(bundle)!.linkLines! : evidenceCardOf(bundle)?.link ?? null,
+    // A transaction reading prints the program addresses the node returned.
+    evidenceCardOf(bundle)?.tx ? transactionAddresses(evidenceCardOf(bundle)!.tx!) : null,
     // The deployer lines carry addresses the card's own capability read from the chain.
     [...(deployerLinesOf(evidenceCardOf(bundle)) ?? []), ...(evidenceCardOf(bundle)?.echo ? [evidenceCardOf(bundle)!.echo!] : [])],
   );

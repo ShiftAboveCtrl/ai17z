@@ -1,6 +1,6 @@
 import { createLogger, errorMessage, refersToSomethingElse } from '@xbam/shared';
 import type { EvidenceMoveWindow } from '@xbam/shared/contracts';
-import { ask, type MarketPairs, type MarketQuery } from '@xbam/upstream';
+import { ask, isSignature, type MarketPairs, type MarketQuery } from '@xbam/upstream';
 import { describeToken, mergeReferences, parseTokenReference, resolveToken } from './token';
 
 const log = createLogger('research');
@@ -68,6 +68,37 @@ export function evidenceMoveRequest(text: string): { address: string; chain: str
   const window = moveWindowOf(text);
   if (window === 'unsupported') return { refusal: MOVE_UNSUPPORTED };
   return { address: identity.address, chain: identity.chain, window: window ?? '1h' };
+}
+
+const EXPLAIN_ASK = /\b(?:explain|what\s+(?:did|does|do|is|was|happened|went|exactly)|decode|read|break\s*down|walk\s*(?:me\s*)?through|tell\s+me\s+about|translate|check|look\s+(?:at|into)|make\s+sense|tx|txn|transaction|signature|sig)\b/i;
+const EXPLAIN_WHOSE = /\b(?:whose|who(?:'s|\s+is|\s+owns|\s+made|\s+sent|\s+did|\s+was)|who\s+(?:are|is)\s+(?:the\s+)?(?:wallet|sender|owner|person)|which\s+(?:wallet|person|handle|account)|belongs?\s+to|dox|identify)\b/i;
+const BASE58_RUN = /[1-9A-HJ-NP-Za-km-z]{80,100}/g;
+const SOLANA_ADDRESS_SHAPE = /\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/;
+
+/**
+ * "What did this transaction do" about exactly one Solana signature.
+ *
+ * A signature is a run of 80 or more base58 characters, so it is found inside an
+ * explorer link too. It has to decode to 64 bytes: a run that does not is refused
+ * with a sentence, never trimmed or repaired into one that does. Two signatures are
+ * refused (one per ask), as is a question about whose it is. A message that also
+ * names a token address is a token ask and is left to the card path. Null for any
+ * other message, so a long base58 string alone does not make a reply.
+ */
+export function explainTransactionRequest(text: string): { signature: string; refusal?: undefined } | { refusal: string } | null {
+  const runs = [...new Set(text.match(BASE58_RUN) ?? [])];
+  if (runs.length === 0) return null;
+  if (SOLANA_ADDRESS_SHAPE.test(text.replace(/https?:\/\/\S+/g, ' ').replace(BASE58_RUN, ' '))) return null;
+  // Asking whose a signature is gets the refusal even without an explain word.
+  if (EXPLAIN_WHOSE.test(text)) {
+    return { refusal: 'I only state what a transaction shows on chain. I do not say who an address belongs to.' };
+  }
+  if (!EXPLAIN_ASK.test(text.replace(BASE58_RUN, ' '))) return null;
+  if (runs.length > 1) return { refusal: 'One transaction at a time, please. Send a single signature.' };
+  if (!isSignature(runs[0]!)) {
+    return { refusal: 'That does not decode to a transaction signature (64 bytes of base58). Please check it and send it again as it is.' };
+  }
+  return { signature: runs[0]! };
 }
 
 const COMPARE_CHAINS = ['solana', 'ethereum', 'bnb', 'base', 'polygon', 'arbitrum', 'optimism', 'avalanche', 'robinhood'];
