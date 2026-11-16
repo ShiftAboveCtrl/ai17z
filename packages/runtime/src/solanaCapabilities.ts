@@ -15,6 +15,8 @@ import {
   type SolanaResult,
 } from '@xbam/upstream';
 
+import { firstFundingFromTransaction, MAX_HOLDER_MAP_HOLDERS, type FundingRead, type HolderReadInput } from './holderMap';
+
 /**
  * What an agent may ask about Solana.
  *
@@ -81,6 +83,7 @@ function reported(provenance: Provenance): z.infer<typeof ProvenanceOut> {
 }
 
 /** One question to the cluster, normalised. */
+type SolanaReader = typeof readSolana;
 async function readSolana(method: SolanaQuery['method'], params: unknown[], commitment: Commitment) {
   const answer = await ask<SolanaQuery, SolanaResult>(SOLANA_FAMILY, { method, params, commitment });
   return {
@@ -431,10 +434,14 @@ const holders = defineCapability({
   modelCallable: true,
   timeoutMs: 30_000,
   readiness: () => solanaReadable(),
-  async run(input) {
+  run: (input) => readTokenHolders(input),
+});
+
+/** The body of `solana.read_token_holders`, shared with the holder map's bounded read. */
+async function readTokenHolders(input: { mint: string; commitment: Commitment }, read_: SolanaReader = readSolana) {
     const [supplyRead, largestRead] = await Promise.all([
-      readSolana('getTokenSupply', [input.mint, { commitment: input.commitment }], input.commitment),
-      readSolana('getTokenLargestAccounts', [input.mint, { commitment: input.commitment }], input.commitment),
+      read_('getTokenSupply', [input.mint, { commitment: input.commitment }], input.commitment),
+      read_('getTokenLargestAccounts', [input.mint, { commitment: input.commitment }], input.commitment),
     ]);
     const supplyValue = valueOf(supplyRead.result) as { amount?: unknown; decimals?: unknown } | null;
     const supply = exactInteger(supplyValue?.amount);
@@ -449,7 +456,7 @@ const holders = defineCapability({
     const owners = new Map<string, string | null>();
     if (rows.length > 0) {
       const accounts = valueOf(
-        (await readSolana('getMultipleAccounts', [rows.map((r) => r.account), { encoding: 'jsonParsed', commitment: input.commitment }], input.commitment)).result,
+        (await read_('getMultipleAccounts', [rows.map((r) => r.account), { encoding: 'jsonParsed', commitment: input.commitment }], input.commitment)).result,
       ) as ({ data?: { parsed?: { info?: { owner?: unknown } } } } | null)[] | null;
       rows.forEach((r, i) => {
         const owner = accounts?.[i]?.data?.parsed?.info?.owner;
@@ -460,7 +467,7 @@ const holders = defineCapability({
     const ownerKind = new Map<string, 'WALLET' | 'PROGRAM' | 'UNKNOWN'>();
     if (distinctOwners.length > 0) {
       const ownerAccounts = valueOf(
-        (await readSolana('getMultipleAccounts', [distinctOwners, { encoding: 'base64', dataSlice: { offset: 0, length: 0 }, commitment: input.commitment }], input.commitment)).result,
+        (await read_('getMultipleAccounts', [distinctOwners, { encoding: 'base64', dataSlice: { offset: 0, length: 0 }, commitment: input.commitment }], input.commitment)).result,
       ) as ({ owner?: unknown } | null)[] | null;
       distinctOwners.forEach((owner, i) => {
         if (!Array.isArray(ownerAccounts)) return ownerKind.set(owner, 'UNKNOWN');
@@ -504,8 +511,7 @@ const holders = defineCapability({
       slot: largestRead.slot,
       provenance: largestRead.provenance,
     };
-  },
-});
+}
 
 /** Two non-negative decimal strings compared exactly, so a balance past 2^53 is still ordered right. */
 function compareRendered(a: string, b: string): number {
@@ -847,6 +853,140 @@ const signatures = defineCapability({
     };
   },
 });
+
+/**
+ * ### The holder map's funding read
+ *
+ * Bounded on every axis, because this is the one read here that fans out. At most
+ * `MAX_HOLDER_MAP_HOLDERS` accounts are looked at, and for each plain wallet there are at most
+ * `SIGNATURE_PAGES` signature reads plus one transaction read, then one read to learn whether a
+ * funder is a program: under forty reads for a whole map, spent under the card flow's own per-asker
+ * and per-mint caps. The result is cached per mint, so a mint costs at most one map per cache
+ * window however many people ask, and two askers arriving together share one in-flight read.
+ *
+ * A wallet's first funding is read from the oldest successful transaction in a window of
+ * `SIGNATURE_PAGES * SIGNATURE_PAGE` signatures. A wallet whose history runs past the window has an
+ * oldest transaction nobody read, so it is `unavailable`, never guessed from a later one. Every
+ * other way of not knowing is `unavailable` with a fixed reason too: the caller draws the difference
+ * between "not shared" and "not read".
+ *
+ * Reads only. Nothing here signs, sends or labels anybody.
+ */
+const SIGNATURE_PAGE = 1000;
+const SIGNATURE_PAGES = 2;
+const HOLDER_FUNDING_CONCURRENCY = 3;
+/** Past this, accounts not yet started are `unavailable`: a map that never finishes holds the reply. */
+export const HOLDER_MAP_DEADLINE_MS = 60_000;
+export const HOLDER_MAP_CACHE_MS = 10 * 60_000;
+const HOLDER_MAP_CACHE_MAX = 64;
+
+export interface HolderFundingRead {
+  mint: string;
+  /** When the holder list was read. */
+  readAt: string;
+  /** The upstream that answered, in the lowercase form every card reading carries. */
+  source: string;
+  holders: HolderReadInput[];
+}
+
+const holderMapCache = new Map<string, { at: number; read: Promise<HolderFundingRead> }>();
+export function resetHolderMapCacheForTest(): void { holderMapCache.clear(); }
+
+async function firstFundingOf(owner: string, reader: SolanaReader): Promise<FundingRead> {
+  try {
+    let before: string | undefined;
+    let rows: { signature: string; err: unknown }[] = [];
+    for (let page = 0; page < SIGNATURE_PAGES; page += 1) {
+      const read = await reader('getSignaturesForAddress', [owner, before ? { limit: SIGNATURE_PAGE, before } : { limit: SIGNATURE_PAGE }], 'finalized');
+      rows = (Array.isArray(read.result) ? read.result : [])
+        .filter((row): row is { signature: string; err?: unknown } => Boolean(row) && typeof row === 'object' && typeof (row as { signature?: unknown }).signature === 'string')
+        .map((row) => ({ signature: row.signature, err: row.err ?? null }));
+      if (rows.length < SIGNATURE_PAGE) break;
+      before = rows[rows.length - 1]!.signature;
+      if (page === SIGNATURE_PAGES - 1) return { state: 'unavailable', reason: 'history longer than the read window' };
+    }
+    if (rows.length === 0) return { state: 'unavailable', reason: 'no transactions read' };
+    // Newest first, so the end of the list is the start of the history; a failed one moved no SOL.
+    const first = [...rows].reverse().find((row) => row.err === null);
+    if (!first) return { state: 'unavailable', reason: 'no successful transaction read' };
+    const tx = await reader('getTransaction', [first.signature, { commitment: 'finalized', encoding: 'json', maxSupportedTransactionVersion: 0 }], 'finalized');
+    const funding = firstFundingFromTransaction(tx.result, owner);
+    // A funder's kind is read once for all of them afterwards; until then it is not known.
+    return funding.state === 'read' ? { state: 'read', funder: funding.funder, funderIsProgram: false } : funding;
+  } catch {
+    // Any failure, a rate limit included, is "not read" for this one account and never a result.
+    return { state: 'unavailable', reason: 'read failed' };
+  }
+}
+
+async function readHolderFundingOnce(mint: string, reader: SolanaReader, now: () => number): Promise<HolderFundingRead> {
+  const started = now();
+  const top = await readTokenHolders({ mint, commitment: 'finalized' }, reader);
+  const readAt = new Date(now()).toISOString();
+  const rows = top.holders.slice(0, MAX_HOLDER_MAP_HOLDERS);
+  const wallets = rows.filter((row) => row.kind === 'WALLET' && row.owner !== null);
+  const funding = new Map<string, FundingRead>();
+  const finished = new Map<string, string>();
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(HOLDER_FUNDING_CONCURRENCY, wallets.length) }, async () => {
+    while (next < wallets.length) {
+      const owner = wallets[next++]!.owner!;
+      funding.set(owner, now() - started > HOLDER_MAP_DEADLINE_MS
+        ? { state: 'unavailable', reason: 'read took too long' } : await firstFundingOf(owner, reader));
+      finished.set(owner, new Date(now()).toISOString());
+    }
+  }));
+
+  // A funder that is a program (a pool, a launchpad, an exchange's program) is not a shared funder.
+  const funders = [...new Set([...funding.values()].flatMap((f) => (f.state === 'read' ? [f.funder] : [])))];
+  const funderIsProgram = new Map<string, boolean>();
+  if (funders.length > 0) {
+    try {
+      const accounts = valueOf((await reader('getMultipleAccounts', [funders, { encoding: 'base64', dataSlice: { offset: 0, length: 0 }, commitment: 'finalized' }], 'finalized')).result) as ({ owner?: unknown } | null)[] | null;
+      if (Array.isArray(accounts) && accounts.length === funders.length) {
+        funders.forEach((funder, i) => {
+          const info = accounts[i];
+          // No account at all is a key that holds no SOL now: not a program.
+          if (info === null || info?.owner === SYSTEM_PROGRAM) funderIsProgram.set(funder, false);
+          else if (typeof info?.owner === 'string') funderIsProgram.set(funder, true);
+        });
+      }
+    } catch {
+      // Left unknown below: a funder whose kind was not read is not grouped on.
+    }
+  }
+
+  const holders: HolderReadInput[] = rows.map((row) => {
+    const own = row.owner ? funding.get(row.owner) : undefined;
+    let result: FundingRead | undefined = own;
+    if (own?.state === 'read') {
+      const program = funderIsProgram.get(own.funder);
+      result = program === undefined ? { state: 'unavailable', reason: 'funder kind not read' } : { ...own, funderIsProgram: program };
+    }
+    return {
+      owner: row.owner, tokenAccount: row.account, sharePct: row.sharePct, kind: row.kind,
+      // An account that was never asked (a program, or an owner the cluster did not name) has no funding read at all.
+      funding: result ?? (row.kind === 'PROGRAM' ? undefined : { state: 'unavailable', reason: 'owner not read' }),
+      readAt: (row.owner ? finished.get(row.owner) : undefined) ?? readAt,
+    };
+  });
+  // The card carries sources as lowercase tokens; anything else in an upstream id is not part of the name.
+  const source = top.provenance.source.toLowerCase().replace(/[^a-z0-9_.-]/g, '').slice(0, 80) || SOLANA_FAMILY;
+  return { mint, readAt, source, holders };
+}
+
+/** The holder list with each plain wallet's first funding address, cached per mint. Throws only when the holder list itself could not be read. */
+export function readHolderFunding(mint: string, options: { reader?: SolanaReader; now?: () => number } = {}): Promise<HolderFundingRead> {
+  const now = options.now ?? Date.now;
+  const hit = holderMapCache.get(mint);
+  if (hit && now() - hit.at < HOLDER_MAP_CACHE_MS) return hit.read;
+  const read = readHolderFundingOnce(mint, options.reader ?? readSolana, now);
+  holderMapCache.set(mint, { at: now(), read });
+  // A failed read is not kept: the next asker may try again, under the same caps.
+  read.catch(() => { if (holderMapCache.get(mint)?.read === read) holderMapCache.delete(mint); });
+  while (holderMapCache.size > HOLDER_MAP_CACHE_MAX) holderMapCache.delete(holderMapCache.keys().next().value!);
+  return read;
+}
 
 export function registerSolanaCapabilities(): void {
   registerCapability(health);

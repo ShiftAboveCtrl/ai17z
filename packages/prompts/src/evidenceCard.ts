@@ -131,14 +131,19 @@ export function renderEvidenceCompare(sides: readonly [CompareSide, CompareSide]
     ...links.flatMap((link, i) => link ? [`${COMPARE_LINK_PREFIXES[i]}${link}`] : [])].join('\n');
 }
 
-export function renderEvidenceCard(readings: CardReading[], offer: string, now = Date.now(), link = '', deployer: DeployerHistory | null = null): string {
+/**
+ * `extra` is a block that belongs under the card's closing words and above the owner line and link,
+ * which today is only the holder map. Empty for every card that does not ask for one, so those are
+ * byte for byte what they were.
+ */
+export function renderEvidenceCard(readings: CardReading[], offer: string, now = Date.now(), link = '', deployer: DeployerHistory | null = null, extra: readonly string[] = []): string {
   let found = false;
   const lines = readings.map(r => {
     found ||= readingAvailable(r, now);
     return `${r.label}: ${readingText(r, now)} [${r.source}; fetched ${fetchedText(r)}]`;
   });
   return ['Token evidence', ...lines, ...(deployer ? renderDeployerLines(deployer, now) : []), ...(!found ? ['evidence not found'] : []), 'not a verdict, reads can be wrong',
-    ...(offer ? [offer] : []), ...(link ? [`${CHECK_LINK_PREFIX}${link}`] : [])].join('\n');
+    ...extra, ...(offer ? [offer] : []), ...(link ? [`${CHECK_LINK_PREFIX}${link}`] : [])].join('\n');
 }
 
 /* ------------------------------------------------------------ what changed */

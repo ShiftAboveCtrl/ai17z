@@ -2,7 +2,9 @@ import { agents, capabilityInvocations, jobs, observability, query, withTransact
 import { createLogger, PipelineError } from '@xbam/shared';
 import { MediaInventory, PolicyConfig, type ResolvedContext } from '@xbam/shared/contracts';
 import { getCapability, invokeCapability, resolvePermission } from '@xbam/tools';
-import { CHECK_LINK_PREFIX, COMPARE_LINK_PREFIXES, renderDeployerLines, renderEvidenceCard, renderEvidenceCompare, renderEvidenceMove, renderTransactionReading, shortAddress, type CardReading, type DeployerHistory, type MoveReport, type TransactionReport } from '@xbam/prompts';
+import { CHECK_LINK_PREFIX, COMPARE_LINK_PREFIXES, renderDeployerLines, renderEvidenceCard, renderEvidenceCompare, renderEvidenceMove, renderHolderMapLines, renderTransactionReading, shortAddress, type CardReading, type DeployerHistory, type HolderMapOnCard, type HolderMapView, type MoveReport, type TransactionReport } from '@xbam/prompts';
+import { buildHolderMap, holderMapDraftRefusal, holderMapRequested } from './holderMap';
+import { readHolderFunding } from './solanaCapabilities';
 import { capabilitySettings } from './capabilityPermissions';
 import { checkLinkUrl, linkedCheckOrigin, studioCheckLink } from './studioCheckLink';
 import { pauseState } from './killSwitch';
@@ -37,6 +39,11 @@ export interface EvidenceCard {
   deployer?: DeployerHistory | null;
   /** First line of a card whose address came from a picture, kept apart so the send check can prove the rest. */
   echo?: string | null;
+  /**
+   * The holder map block under the card's closing words, kept so the send check can render the card
+   * again and prove it, and so the picture is drawn from the very figures the text carries.
+   */
+  holderMap?: HolderMapOnCard | null;
 }
 type CardRequest = ReturnType<typeof evidenceCardRequest>;
 /** What reading the asker's picture came to. `request` null means there was nothing to act on. */
@@ -125,6 +132,51 @@ async function readImageCheck(bundle: JobBundle, context: ResolvedContext, kind:
   const whose = own.length ? 'your image' : 'the image above';
   return { request, echo: `read from ${whose}: ${address}` };
 }
+/** The lines of the holder map block, or none. */
+function holderMapLinesOf(card: Pick<EvidenceCard, 'holderMap'>): string[] {
+  return card.holderMap ? renderHolderMapLines(card.holderMap) : [];
+}
+
+/**
+ * The largest holders and each plain wallet's first funding address, as a view. Null when the
+ * holder list could not be read at all: the caller says so rather than leaving the ask unanswered.
+ */
+async function holderMapOf(mint: string): Promise<HolderMapView | null> {
+  try {
+    const read = await readHolderFunding(mint);
+    const view = buildHolderMap({ mint, readAt: read.readAt, source: read.source, holders: read.holders });
+    return view.holders.length + view.notRead.length > 0 ? view : null;
+  } catch (error) {
+    log.warn('holder map not read', { error: error instanceof Error ? error.message : String(error) });
+    return null;
+  }
+}
+
+/**
+ * The card with its holder map block, fitted to the output length policy.
+ *
+ * What gives way first, in order: the check page link (the map keeps its place before the link
+ * does not, the link keeps its place before the map), then the deployer lines. The map goes last
+ * of all: the full block, the compact one, then none, and if no form fits the card is exactly what
+ * it was before the map existed.
+ */
+function composeCard(readings: CardReading[], offer: string, link: string | null, deployer: DeployerHistory | null, map: HolderMapOnCard[], max: number, echoed: (card: string) => string): { text: string; link: string | null; deployer: DeployerHistory | null; holderMap: HolderMapOnCard | null } {
+  const tries: Array<[string | null, DeployerHistory | null]> = [[link, deployer]];
+  if (link) tries.push([null, deployer]);
+  if (link || deployer) tries.push([null, null]);
+  for (const [l, d] of tries) {
+    for (const form of map) {
+      const text = echoed(renderEvidenceCard(readings, offer, undefined, l ?? '', d, renderHolderMapLines(form)));
+      if (text.length <= max) return { text, link: l, deployer: d, holderMap: form };
+    }
+  }
+  for (const [l, d] of tries) {
+    const text = echoed(renderEvidenceCard(readings, offer, undefined, l ?? '', d));
+    if (text.length <= max) return { text, link: l, deployer: d, holderMap: null };
+  }
+  const [l, d] = tries[tries.length - 1]!;
+  return { text: echoed(renderEvidenceCard(readings, offer, undefined, l ?? '', d)), link: l, deployer: d, holderMap: null };
+}
 export function evidenceCardOf(bundle: JobBundle): EvidenceCard | null {
   return (bundle.job.resolvedContext?.meta as { evidenceCard?: EvidenceCard } | undefined)?.evidenceCard ?? null;
 }
@@ -187,6 +239,7 @@ export async function researchEvidenceCard(bundle: JobBundle): Promise<boolean> 
   let cardJobId: string | null = null;
   let link: string | null = null;
   let readings: CardReading[] = [];
+  let holderMap: HolderMapOnCard | null = null;
   let deployer: DeployerHistory | null = null;
   const promo = readPromo(context.incomingText.replace(request.address ?? /$^/, ''));
   if (intent === 'DEFLECT' || promo.level !== 'none' || PITCH_WORDS.test(context.incomingText)) {
@@ -239,22 +292,28 @@ export async function researchEvidenceCard(bundle: JobBundle): Promise<boolean> 
         const read = output?.chain === request.chain && output.address?.toLowerCase() === request.address.toLowerCase();
         link = read && bundle.policy.tools.evidenceCardLink && !bundle.policy.output.forbidLinks
           ? await studioCheckLink({ chain: request.chain, address: request.address, readings }) : null;
-        text = echoed(readings.length ? renderEvidenceCard(readings, offer, undefined, link ?? '', deployer)
-          : 'Token evidence unavailable; evidence not found. This is not a verdict, reads can be wrong.');
-        // The inline card is the reply. A section that would push it past the length policy is left off
-        // rather than sending the whole card to review: first the link, then the deployer lines.
-        if (link && text.length > bundle.policy.output.maxCharacters) {
-          link = null;
-          text = echoed(renderEvidenceCard(readings, offer, undefined, '', deployer));
-        }
-        if (readings.length && deployer && text.length > bundle.policy.output.maxCharacters) {
-          deployer = null;
-          text = echoed(renderEvidenceCard(readings, offer, undefined, '', null));
+        // A holder map is an opt-in ask, so nothing is read for an ordinary check. It is chain reads only,
+        // taken after the card's own reservation (so under its per-asker and per-mint caps) and cached per mint.
+        const wantsMap = readings.length > 0 && read && request.chain === 'solana' && bundle.policy.tools.holderMap
+          && holderMapRequested(context.incomingText);
+        const mapView = wantsMap ? await holderMapOf(request.address) : null;
+        const forms: HolderMapOnCard[] = !wantsMap ? []
+          : mapView ? [{ form: 'full', view: mapView }, { form: 'compact', view: mapView }] : [{ form: 'note', view: null }];
+        if (readings.length === 0) {
+          text = echoed('Token evidence unavailable; evidence not found. This is not a verdict, reads can be wrong.');
+        } else {
+          // The inline card is the reply. A section that would push it past the length policy is left
+          // off rather than sending the whole card to review (see composeCard for the order).
+          const composed = composeCard(readings, offer, link, deployer, forms, bundle.policy.output.maxCharacters, echoed);
+          text = composed.text;
+          link = composed.link;
+          deployer = composed.deployer;
+          holderMap = composed.holderMap;
         }
       }
     }
   }
-  const evidenceCard: EvidenceCard = { text, readings, cardJobId, link, deployer, echo: echo && request.address && !request.refusal ? echo : null };
+  const evidenceCard: EvidenceCard = { text, readings, cardJobId, link, deployer, echo: echo && request.address && !request.refusal ? echo : null, ...(holderMap ? { holderMap } : {}) };
   // Evidence retains the same fence and attribution as ordinary research.
   const research = { findings: [{ kind: 'token', query: request.address ?? 'ambiguous token', source: CAP,
     title: 'Token evidence card', summary: text, url: null, retrievedAt: new Date().toISOString() }], failed: [], note: 'Deterministic token evidence reply.' };
@@ -262,7 +321,7 @@ export async function researchEvidenceCard(bundle: JobBundle): Promise<boolean> 
   await jobs.updateJob(bundle.job.id, { resolvedContext });
   bundle.job.resolvedContext = resolvedContext;
   await observability.emitTrace({ jobId: bundle.job.id, agentId: bundle.agent.id, type: 'RESEARCH_DONE',
-    message: research.note, data: { capability: CAP, cardJobId, readings: readings.length } });
+    message: research.note, data: { capability: CAP, cardJobId, readings: readings.length, ...(holderMap ? { holderMap: holderMap.form } : {}) } });
   return true;
 }
 
@@ -657,11 +716,11 @@ function readingsExpired(readings: CardReading[], now = Date.now()): boolean {
  * shows the value the owner approved. Rendering at the current time would
  * call that same card a mismatch.
  */
-function textMatchesReadings(text: string, readings: CardReading[], offer: string, link: string, deployer: DeployerHistory | null = null, echo = ''): boolean {
+function textMatchesReadings(text: string, readings: CardReading[], offer: string, link: string, deployer: DeployerHistory | null = null, echo = '', extra: readonly string[] = []): boolean {
   // The launch count comes from the same index record as the readings, so their fetch time is the card's.
   const fetched = readings.map(reading => Date.parse(reading.fetchedAt ?? '')).filter(time => Number.isFinite(time));
   const asOf = fetched.length ? Math.max(...fetched) : Date.now();
-  return `${echo ? `${echo}\n` : ''}${renderEvidenceCard(readings, offer, asOf, link, deployer)}` === text;
+  return `${echo ? `${echo}\n` : ''}${renderEvidenceCard(readings, offer, asOf, link, deployer, extra)}` === text;
 }
 
 /** The same inspect path a first card uses: permission, research budget, asker cap, mint cooldown, then the capability. */
@@ -703,7 +762,7 @@ async function rereadEvidenceCard(bundle: JobBundle, card: EvidenceCard): Promis
   if (!readings.length) return null;
   const deployer = output?.deployer ?? null;
   const offer = card.text.split('\n').find(line => line.startsWith('Owner:')) ?? '';
-  return { text: `${card.echo ? `${card.echo}\n` : ''}${renderEvidenceCard(readings, offer, undefined, card.link ?? '', deployer)}`, readings, deployer };
+  return { text: `${card.echo ? `${card.echo}\n` : ''}${renderEvidenceCard(readings, offer, undefined, card.link ?? '', deployer, holderMapLinesOf(card))}`, readings, deployer };
 }
 
 /**
@@ -723,8 +782,17 @@ export async function checkEvidenceCardAtSend(bundle: JobBundle, output: string)
   if (card.tx) return checkTransactionAtSend(bundle, { ...card, tx: card.tx }, output);
   if (card.compare || card.linkLines) return checkCompareAtSend(bundle, card, output);
   const current = await agents.getActivePolicy(bundle.agent.id);
-  if (!PolicyConfig.parse(current?.config ?? {}).tools.evidenceCards || !(await permitted(bundle.agent.id))) {
+  const nowPolicy = PolicyConfig.parse(current?.config ?? {});
+  if (!nowPolicy.tools.evidenceCards || !(await permitted(bundle.agent.id))) {
     throw PipelineError.permanent('evidence_card_disabled', 'Token evidence replies or their capability were switched off.');
+  }
+  if (card.holderMap) {
+    // A queued card obeys the owner's current switch, and a rewrite may not drop what makes the map a reading.
+    if (!nowPolicy.tools.holderMap) {
+      throw PipelineError.review('evidence_card_changed', 'The holder map was switched off after this card was made. Generate a fresh card.');
+    }
+    const refusal = card.holderMap.view ? holderMapDraftRefusal(card.holderMap.view, card.holderMap.form, output) : null;
+    if (refusal) throw PipelineError.review('evidence_card_changed', refusal);
   }
   const offer = card.text.split('\n').find(line => line.startsWith('Owner:')) ?? '';
   const link = card.link ?? '';
@@ -742,7 +810,7 @@ export async function checkEvidenceCardAtSend(bundle: JobBundle, output: string)
       throw PipelineError.review('evidence_card_changed', 'The check page link no longer matches the linked Studio or the owner setting. Generate a fresh card.');
     }
   }
-  const mismatched = card.readings.length > 0 && !textMatchesReadings(card.text, card.readings, offer, link, card.deployer ?? null, card.echo ?? '');
+  const mismatched = card.readings.length > 0 && !textMatchesReadings(card.text, card.readings, offer, link, card.deployer ?? null, card.echo ?? '', holderMapLinesOf(card));
   if (output !== card.text || mismatched) {
     throw PipelineError.review('evidence_card_changed', 'The complete sourced evidence card changed or its readings expired. Generate a fresh card.');
   }
