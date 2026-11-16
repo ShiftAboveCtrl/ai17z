@@ -90,8 +90,12 @@ export async function processRadarReceipts(agentId: string, reader = readSignalW
       ? `Receipt predicate ${row.evidence.watch.predicate} has no lossless compact form within the output character limit.` : null;
     let refusal = unsupported ?? await signalIdeaRefusal(row.idea_id, undefined, { agentId, accountId: row.account_id }) ?? await receiptGate(agentId, row.account_id, now, retry);
     const claimed = await withTransaction(async tx => {
-      // Serialize one agent's per-day reservations across accounts and workers.
-      await tx.one('SELECT id FROM agents WHERE id=$1 FOR UPDATE', [agentId]);
+      // Serialize one agent's per-day reservations across accounts and workers. NO KEY UPDATE
+      // still excludes every other claimer but not a foreign-key check on agents.id: a read
+      // finishing on a receipt this claim is about to lock inserts its content_ideas row (a
+      // KEY SHARE on this agent), and FOR UPDATE made the two wait on each other, which
+      // Postgres ended as "deadlock detected".
+      await tx.one('SELECT id FROM agents WHERE id=$1 FOR NO KEY UPDATE', [agentId]);
       const current = await tx.one("SELECT status FROM signal_receipts WHERE id=$1 FOR UPDATE", [row.id]);
       if (current?.status !== 'pending') return false;
       const counts = await tx.one<{ daily: number; mint: number }>(`SELECT count(*)::int AS daily,

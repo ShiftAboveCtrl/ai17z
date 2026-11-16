@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { accounts, actions, agents, capabilities, capabilityPermissions, cadences, jobs, ops, query, radar, signals, learning, deliberation as mind } from '@xbam/database';
+import { accounts, actions, agents, capabilities, capabilityPermissions, cadences, jobs, ops, query, radar, signals, learning, withTransaction, deliberation as mind } from '@xbam/database';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
 import { pollSignalSource } from '../../packages/runtime/src/signalRadar';
@@ -119,6 +119,40 @@ describe('durable radar receipts', () => {
     expect(rows.map(r => r.window_hours)).toEqual([1, 24]);
     expect(rows.map(r => r.delay)).toEqual([3600, 86400]);
     expect(await query("SELECT id FROM content_ideas WHERE source='radar_receipt'")).toHaveLength(1);
+  });
+  it('AC1 a claim queued on a receipt never deadlocks the read that is recording its idea', async () => {
+    // main CI hit "deadlock detected" in the claim here once in about 2400 tests: the
+    // claim takes the agent row, then the receipt row, while a finishing read holds
+    // the receipt row and its idea insert needs the agent row for the foreign key.
+    // This pins that exact interleaving instead of hoping two restarts line up.
+    const f = await published();
+    await processRadarReceipts(f.agentId, async () => read(30), new Date(Date.now() - 3 * 3600_000));
+    const [receipt] = await query("SELECT id FROM signal_receipts WHERE window_hours=1 AND status='pending'");
+    expect(receipt).toBeTruthy();
+    let holding!: () => void;
+    let claimQueued!: () => void;
+    const held = new Promise<void>(resolve => { holding = resolve; });
+    const queued = new Promise<void>(resolve => { claimQueued = resolve; });
+    const finishing = withTransaction(async tx => {
+      await tx.one('SELECT status FROM signal_receipts WHERE id=$1 FOR UPDATE', [receipt!.id]);
+      holding();
+      // Take the agent row only once the claim is queued behind this receipt lock.
+      await queued;
+      await tx.query("INSERT INTO content_ideas(agent_id,kind,summary,detail,source,score) VALUES($1,'observation','Radar receipt: what changed','detail','radar_receipt',75)", [f.agentId]);
+      await tx.query("UPDATE signal_receipts SET status='skipped', reason='Finished by the other worker.' WHERE id=$1", [receipt!.id]);
+    });
+    await held;
+    const claiming = processRadarReceipts(f.agentId, async () => read(30));
+    // Pooled reads are fine out here: only the transaction above forbids them.
+    for (let tries = 0; tries < 200; tries++) {
+      const [waiting] = await query<{ n: number }>("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'");
+      if ((waiting?.n ?? 0) > 0) break;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    claimQueued();
+    const [a, b] = await Promise.allSettled([finishing, claiming]);
+    expect([a, b].map(r => (r.status === 'rejected' ? String(r.reason) : r.status))).toEqual(['fulfilled', 'fulfilled']);
+    expect((await query('SELECT status FROM signal_receipts WHERE id=$1', [receipt!.id]))[0]).toMatchObject({ status: 'skipped' });
   });
   it('AC1 rehearsals never schedule receipts', async () => {
     const f = await published(true);
