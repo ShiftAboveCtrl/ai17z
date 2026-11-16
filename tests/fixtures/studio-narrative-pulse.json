@@ -1,0 +1,20 @@
+{
+  "contribution_batch": {
+    "protocol": 1,
+    "terms": [
+      { "term": "$sol", "share": 0.142, "distinctAuthors": 41, "windowEnd": "2026-11-15T08:00:00.000Z" },
+      { "term": "restaking", "share": 0.09, "distinctAuthors": 23, "windowEnd": "2026-11-15T08:00:00.000Z" }
+    ]
+  },
+  "contribution_receipt": { "protocol": 1, "accepted": true },
+  "checks": {
+    "protocol": 1,
+    "generated_at": "2026-11-15T08:00:00.000Z",
+    "window_hours": 24,
+    "min_askers": 3,
+    "rows": [
+      { "chain": "solana", "mint": "So11111111111111111111111111111111111111112", "askers": 9, "readings": [] },
+      { "chain": "base", "mint": "0x4200000000000000000000000000000000000006", "askers": 4, "readings": [] }
+    ]
+  }
+}

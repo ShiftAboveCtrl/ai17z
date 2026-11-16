@@ -560,6 +560,22 @@ export function PoliciesSection({
             onChange={(v) => patch((n) => void (n.studio.postMostChecked = v))}
           />
         </Group>
+
+        {/* Both off. It reuses posts the agent already read and reads nothing more from X. */}
+        <Group title="Talked about against checked" blurb="One daily post about the subjects the accounts your agent reads repeated most, set beside what people asked Studio to check. Talked about is not endorsed, and neither is checked.">
+          <Toggle
+            label="Let it post the daily pulse"
+            description="It uses posts your agent already read and never reads more. It leaves out subjects an agent does not raise on its own, anything naming a person and wording that looks copied across accounts, calls nothing rising without an earlier reading, and says so when Studio could not be reached."
+            checked={draft.studio.postNarrativePulse}
+            onChange={(v) => patch((n) => void (n.studio.postNarrativePulse = v))}
+          />
+          <Toggle
+            label="Share the subjects with Studio"
+            description="Sends Studio only a word, its share of the posts read, how many different accounts used it and the hour the window ended. Never an account, a handle or the words of a post. Separate from posting."
+            checked={draft.studio.contributeNarrativeTerms}
+            onChange={(v) => patch((n) => void (n.studio.contributeNarrativeTerms = v))}
+          />
+        </Group>
       </div>
 
       {/*

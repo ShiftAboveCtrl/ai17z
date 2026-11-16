@@ -70,13 +70,13 @@ export interface NarrativeReading {
 }
 
 /** Fewer accounts than this and it is somebody's hobby horse, not a narrative. */
-const MIN_AUTHORS = 3;
+export const NARRATIVE_MIN_AUTHORS = 3;
 
 /** Below this many posts in the recent window, no claim is worth making. */
-const MIN_RECENT_POSTS = 12;
+export const NARRATIVE_MIN_RECENT_POSTS = 12;
 
 /** How much the share has to move before "rising" is the right word. */
-const RISING_LIFT = 1.5;
+export const NARRATIVE_RISING_LIFT = 1.5;
 
 /**
  * Words that carry no subject.
@@ -198,9 +198,9 @@ export function readNarratives(
     gaps.push(`${undated} post${undated === 1 ? '' : 's'} had no timestamp and could not be placed in a window.`);
   }
 
-  if (recent.length < MIN_RECENT_POSTS) {
+  if (recent.length < NARRATIVE_MIN_RECENT_POSTS) {
     gaps.push(
-      `Only ${recent.length} post${recent.length === 1 ? '' : 's'} in the last ${windowHours} hours; ${MIN_RECENT_POSTS} is the fewest worth drawing anything from.`,
+      `Only ${recent.length} post${recent.length === 1 ? '' : 's'} in the last ${windowHours} hours; ${NARRATIVE_MIN_RECENT_POSTS} is the fewest worth drawing anything from.`,
     );
     return { narratives: [], gaps, considered: recent.length + prior.length };
   }
@@ -213,7 +213,7 @@ export function readNarratives(
 
   const narratives: Narrative[] = [];
   for (const [term, entry] of recentBucket.byTerm) {
-    if (entry.authors.size < MIN_AUTHORS) continue;
+    if (entry.authors.size < NARRATIVE_MIN_AUTHORS) continue;
     const share = entry.mentions / recentBucket.posts;
     const priorEntry = priorBucket?.byTerm.get(term);
     const priorShare = priorBucket ? (priorEntry?.mentions ?? 0) / priorBucket.posts : undefined;
@@ -221,7 +221,7 @@ export function readNarratives(
     const lift =
       priorShare === undefined || newlySeen ? undefined : Number((share / priorShare).toFixed(2));
 
-    const rising = lift !== undefined && lift >= RISING_LIFT;
+    const rising = lift !== undefined && lift >= NARRATIVE_RISING_LIFT;
     // Named from the handles rather than the identity keys: the screen writes
     // these as `@name`, and an identity key is as likely to be a numeric id.
     const examples = [...entry.handles].slice(0, 3);

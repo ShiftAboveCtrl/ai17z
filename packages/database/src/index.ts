@@ -30,6 +30,7 @@ export * as capabilities from './repositories/capabilities';
 export * as capabilityInvocations from './repositories/capabilityInvocations';
 export * as postAnalytics from './repositories/postAnalytics';
 export * as growth from './repositories/growth';
+export * as narrativePulseRepo from './repositories/narrativePulse';
 export * as experiments from './repositories/experiments';
 export * as capabilityPermissions from './repositories/capabilityPermissions';
 export * as autonomy from './repositories/autonomy';
