@@ -111,7 +111,11 @@ export async function applyPin(
   version: { playbookId: string; version: number },
 ): Promise<PinResult> {
   return withTransaction(async (tx) => {
-    await tx.one(`SELECT id FROM agents WHERE id = $1 FOR UPDATE`, [agentId]);
+    // NO KEY UPDATE still queues every other importer, but not a foreign-key check on agents.id:
+    // a mandate activation holds the live mandate row and inserts its replacement (a KEY SHARE on
+    // this agent) while this import waits to retire that same row, and FOR UPDATE made the two
+    // wait on each other until Postgres ended one as "deadlock detected".
+    await tx.one(`SELECT id FROM agents WHERE id = $1 FOR NO KEY UPDATE`, [agentId]);
     // Different agents importing the same version must agree on its digest too.
     await tx.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`playbook-version:${version.playbookId}:${version.version}`]);
     const current = mapRow<TradeMandateRow>(await tx.one(`SELECT * FROM trade_mandates WHERE agent_id = $1 AND retired_at IS NULL`, [agentId]));

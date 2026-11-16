@@ -10,7 +10,7 @@ export async function riskStudioServer(key: InstallationKey) {
   const observations = new Map<string, StudioRiskObservation>();
   const requests: { method: string; path: string; valid: boolean }[] = [];
   const batches: unknown[] = [];
-  const state = { watches: [] as StudioRiskWatch[], document: null as unknown, status: 200, loseAcknowledgement: false, coinAlerts: null as unknown };
+  const state = { watches: [] as StudioRiskWatch[], document: null as unknown, status: 200, loseAcknowledgement: false, coinAlerts: null as unknown, coinAlertsGate: null as Promise<void> | null };
   let origin = '';
   const server = createServer(async (req, res) => {
     const answer = (status: number, body: unknown) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
@@ -30,6 +30,8 @@ export async function riskStudioServer(key: InstallationKey) {
       seenProofs.add(claims.jti);
       if (token) return answer(200, { access_token: 'risk-test-token', expires_in: 300 });
       if (state.status !== 200) return answer(state.status, {});
+      // A test may hold the answer back to freeze a sync between its claim and its transaction.
+      if (req.method === 'GET' && req.url === STUDIO_COIN_ALERTS_PATH && state.coinAlertsGate) await state.coinAlertsGate;
       if (req.method === 'GET' && req.url === STUDIO_COIN_ALERTS_PATH) return answer(200, state.coinAlerts ?? { protocol: 1, generated_at: new Date().toISOString(), alerts: [] });
       if (req.method === 'GET' && req.url === STUDIO_RISK_PATH) return answer(200, state.document ?? { protocol: 1, generated_at: new Date().toISOString(), watches: state.watches });
       if (req.method === 'POST' && req.url === STUDIO_RISK_PATH) {

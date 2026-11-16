@@ -104,8 +104,16 @@ export async function setStudioRiskWatches(input: { agentId: string; ownerId: st
   const ready = await studioLinkedContext();
   if (input.enabled && 'ok' in ready) return ready;
   await withTransaction(async tx => {
-    await tx.one('SELECT id FROM agents WHERE id=$1 FOR UPDATE', [input.agentId]);
-    const old = await tx.one<Binding>('SELECT * FROM studio_risk_bindings WHERE agent_id=$1 FOR UPDATE', [input.agentId]);
+    // NO KEY UPDATE still queues every other change for this agent, but not a foreign-key check on
+    // agents.id: a poll holding this agent's source row records a crossing (an idea, a candidate, a
+    // follow-up, each a KEY SHARE on the agent) while this waits to disable that same source, and
+    // FOR UPDATE made the two wait on each other until Postgres ended one as "deadlock detected".
+    await tx.one('SELECT id FROM agents WHERE id=$1 FOR NO KEY UPDATE', [input.agentId]);
+    // The binding is locked the same way, for the same reason: the poll records a crossing as a
+    // studio_risk_outbox row, whose foreign key is a KEY SHARE on this binding, taken while the
+    // poll holds the source row this change is about to disable. FOR UPDATE here made the two wait
+    // on each other. The binding id only changes below, after the source row has been taken.
+    const old = await tx.one<Binding>('SELECT * FROM studio_risk_bindings WHERE agent_id=$1 FOR NO KEY UPDATE', [input.agentId]);
     if (old) await tx.query(`UPDATE radar_sources s SET enabled=false,status='DISABLED',updated_at=now() WHERE ${sourceScope}=$1`, [old.id]);
     if ('ok' in ready) {
       await tx.query('UPDATE studio_risk_bindings SET enabled=false,updated_at=now() WHERE agent_id=$1', [input.agentId]);
@@ -151,7 +159,9 @@ export async function syncStudioRiskWatches(): Promise<void> {
     if (!sameLink(binding, await studioLinkedContext())) { await suspend(binding, 'The Studio link changed during sync.', true); continue; }
     const expiresAt = new Date(Date.parse(parsed.data.generated_at) + STUDIO_RISK_SNAPSHOT_MS);
     await withTransaction(async tx => {
-      const current = await tx.one<Binding>('SELECT * FROM studio_risk_bindings WHERE id=$1 AND enabled FOR UPDATE', [binding.id]);
+      // NO KEY UPDATE, as in setStudioRiskWatches: this goes on to take radar source rows, and a poll
+      // holding one records its crossing with a KEY SHARE on this binding. This never changes the id.
+      const current = await tx.one<Binding>('SELECT * FROM studio_risk_bindings WHERE id=$1 AND enabled FOR NO KEY UPDATE', [binding.id]);
       if (!current || current.may_trigger !== binding.may_trigger || String(current.updated_at) !== String(binding.updated_at)) return;
       const allowed = await tx.one(`SELECT a.id FROM agents a JOIN accounts ac ON ac.id=$2 AND ac.owner_id=a.owner_id
         JOIN agent_accounts aa ON aa.agent_id=a.id AND aa.account_id=ac.id AND aa.enabled WHERE a.id=$1 AND a.owner_id=$3`, [binding.agent_id, binding.account_id, binding.owner_id]);
