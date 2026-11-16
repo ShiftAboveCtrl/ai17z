@@ -1,4 +1,4 @@
-import { query, withTransaction } from '@xbam/database';
+import { query, withTransaction, type Tx } from '@xbam/database';
 import {
   RADAR_UNIVERSE_CEILING, STUDIO_COIN_ALERTS_MAX_ENTRIES, STUDIO_COIN_ALERTS_MAX_MINTS, STUDIO_COIN_ALERTS_PATH,
   STUDIO_COIN_ALERTS_SNAPSHOT_MS, StudioCoinAlertDocument, type CoinAlertSkip,
@@ -66,27 +66,38 @@ export async function setStudioCoinAlerts(input: { agentId: string; ownerId: str
   const ready = await studioLinkedContext();
   if (input.enabled && 'ok' in ready) return ready;
   await withTransaction(async tx => {
-    await tx.one('SELECT id FROM agents WHERE id=$1 FOR UPDATE', [input.agentId]);
-    await tx.query(`UPDATE radar_sources SET enabled=false,status='DISABLED',updated_at=now() WHERE config->>'coinAlertAgentId'=$1`, [input.agentId]);
+    // One order for everything that changes this agent's coin alerts: the agent, then its binding,
+    // then its radar source (here, in disable and in the sync). Two of them taking the binding and
+    // the source in opposite orders waited on each other until Postgres ended one. NO KEY UPDATE
+    // on the agent, because the radar poll holding the source records ideas and candidates for the
+    // agent (a KEY SHARE on it) and FOR UPDATE made that wait on this.
+    await lockAgent(tx, input.agentId);
     if ('ok' in ready) {
       await tx.query('UPDATE studio_coin_alert_bindings SET enabled=false,updated_at=now() WHERE agent_id=$1', [input.agentId]);
-      return;
+    } else {
+      // A new account or link starts from an empty list: a list confirmed under another scope is not reused.
+      await tx.query(`INSERT INTO studio_coin_alert_bindings(agent_id,owner_id,account_id,enabled,installation_id,origin,linked_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(agent_id) DO UPDATE SET
+        mints=CASE WHEN studio_coin_alert_bindings.account_id=excluded.account_id AND studio_coin_alert_bindings.installation_id=excluded.installation_id
+          AND studio_coin_alert_bindings.linked_at=excluded.linked_at THEN studio_coin_alert_bindings.mints ELSE '[]'::jsonb END,
+        account_id=excluded.account_id,enabled=excluded.enabled,installation_id=excluded.installation_id,origin=excluded.origin,
+        linked_at=excluded.linked_at,next_sync_at=now(),last_error=NULL,updated_at=now()`,
+      [input.agentId, input.ownerId, input.accountId, input.enabled, ready.link.installationId, ready.where.origin, ready.link.linkedAt]);
     }
-    // A new account or link starts from an empty list: a list confirmed under another scope is not reused.
-    await tx.query(`INSERT INTO studio_coin_alert_bindings(agent_id,owner_id,account_id,enabled,installation_id,origin,linked_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(agent_id) DO UPDATE SET
-      mints=CASE WHEN studio_coin_alert_bindings.account_id=excluded.account_id AND studio_coin_alert_bindings.installation_id=excluded.installation_id
-        AND studio_coin_alert_bindings.linked_at=excluded.linked_at THEN studio_coin_alert_bindings.mints ELSE '[]'::jsonb END,
-      account_id=excluded.account_id,enabled=excluded.enabled,installation_id=excluded.installation_id,origin=excluded.origin,
-      linked_at=excluded.linked_at,next_sync_at=now(),last_error=NULL,updated_at=now()`,
-    [input.agentId, input.ownerId, input.accountId, input.enabled, ready.link.installationId, ready.where.origin, ready.link.linkedAt]);
+    await tx.query(`UPDATE radar_sources SET enabled=false,status='DISABLED',updated_at=now() WHERE config->>'coinAlertAgentId'=$1`, [input.agentId]);
   });
   await ops.audit({ actorUserId: input.ownerId, action: 'studio.coin-alerts.changed', entityType: 'agent', entityId: input.agentId, data: { enabled: input.enabled } });
   return { ok: true as const, ...await studioCoinAlertStatus(input.agentId, input.ownerId) };
 }
 
+/** First lock of every transaction that changes an agent's coin alerts; see setStudioCoinAlerts. */
+async function lockAgent(tx: Tx, agentId: string): Promise<void> {
+  await tx.query('SELECT id FROM agents WHERE id=$1 FOR NO KEY UPDATE', [agentId]);
+}
+
 async function disable(binding: Binding, reason: string) {
   await withTransaction(async tx => {
+    await lockAgent(tx, binding.agent_id);
     await tx.query('UPDATE studio_coin_alert_bindings SET enabled=false,last_error=$2,updated_at=now() WHERE agent_id=$1', [binding.agent_id, reason]);
     await tx.query(`UPDATE radar_sources SET enabled=false,status='DISABLED',idle_reason=$2,updated_at=now() WHERE config->>'coinAlertAgentId'=$1::text`, [binding.agent_id, reason]);
   });
@@ -117,6 +128,7 @@ export async function syncStudioCoinAlerts(): Promise<void> {
     if (read.mints.length > room) skipped.push({ index: -1, reason: `${read.mints.length - room} coins were not added: the universe ceiling of ${RADAR_UNIVERSE_CEILING} (with the playbook) and ${STUDIO_COIN_ALERTS_MAX_MINTS} alerts applies.` });
     if (!sameLink(binding, await studioLinkedContext())) { await disable(binding, 'The Studio link changed during sync.'); continue; }
     await withTransaction(async tx => {
+      await lockAgent(tx, binding.agent_id);
       const current = await tx.one<Binding>('SELECT * FROM studio_coin_alert_bindings WHERE agent_id=$1 AND enabled FOR UPDATE', [binding.agent_id]);
       if (!current || current.account_id !== binding.account_id) return;
       const allowed = await tx.one(`SELECT 1 FROM agent_accounts aa JOIN agents a ON a.id=aa.agent_id JOIN accounts ac ON ac.id=aa.account_id AND ac.owner_id=a.owner_id

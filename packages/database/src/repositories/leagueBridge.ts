@@ -204,6 +204,10 @@ export async function activateEntry(input: {
     const entry = mapRow<LeagueEntryRow>(await tx.one(`SELECT ${ENTRY_COLUMNS} FROM league_entries WHERE id = $1 FOR UPDATE`, [input.entryId]));
     if (!entry || entry.status !== 'PENDING') return { ok: false, code: 'NOT_PENDING', why: 'This entry is not waiting to be activated.' };
     if (!entry.remoteEntryId) return { ok: false, code: 'NO_REMOTE_ENTRY', why: 'Studio has not accepted this entry yet.' };
+    // The agent before its mandate, the order applyPin takes them in. Nothing locks an agent and then
+    // a league entry, so putting the agent after the entry cannot make a cycle. NO KEY UPDATE, so the
+    // foreign-key check of the replacement mandate's insert is not made to wait on it.
+    await tx.query('SELECT id FROM agents WHERE id = $1 FOR NO KEY UPDATE', [entry.agentId]);
     const current = mapRow<TradeMandateRow>(await tx.one(`SELECT * FROM trade_mandates WHERE agent_id = $1 AND retired_at IS NULL FOR UPDATE`, [entry.agentId]));
     const isLeague = current ? (await tx.one(`SELECT 1 AS yes FROM league_entries WHERE mandate_id = $1`, [current.id])) !== null : false;
     const slot = await slotFor(current, isLeague, input.replacePaperMandate);

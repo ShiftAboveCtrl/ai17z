@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { accounts, capabilities, ops, playbooks, query, radar, trading, withTransaction } from '@xbam/database';
 import * as runtime from '@xbam/runtime';
-import { AssetRef, type TradeMandate } from '@xbam/shared/contracts';
+import { AssetRef, STUDIO_COIN_ALERTS_PATH, type TradeMandate } from '@xbam/shared/contracts';
 import { sealSecret } from '@xbam/shared';
 import { newInstallationKey } from '../../packages/runtime/src/studioJose';
 import { installHarness } from '../support/harness';
@@ -36,8 +36,13 @@ afterEach(async () => {
 
 const IDEA = "INSERT INTO content_ideas(agent_id,kind,summary,detail,source,score) VALUES($1,'observation','Lock order','detail','market_signal',50)";
 
-/** Holds a row until told to go on, then records an idea for the agent: a KEY SHARE on agents.id. */
-function holder(lock: (tx: Parameters<Parameters<typeof withTransaction>[0]>[0]) => Promise<unknown>, agentId: string) {
+type Tx = Parameters<Parameters<typeof withTransaction>[0]>[0];
+
+/**
+ * Holds a row until told to go on, then runs `then` in the same transaction. The default records
+ * an idea for the agent: a KEY SHARE on agents.id.
+ */
+function holder(lock: (tx: Tx) => Promise<unknown>, agentId: string, then: (tx: Tx) => Promise<unknown> = tx => tx.query(IDEA, [agentId])) {
   let holding!: () => void;
   let proceed!: () => void;
   const held = new Promise<void>(resolve => { holding = resolve; });
@@ -46,20 +51,21 @@ function holder(lock: (tx: Parameters<Parameters<typeof withTransaction>[0]>[0])
     await lock(tx);
     holding();
     await queued;
-    await tx.query(IDEA, [agentId]);
+    await then(tx);
   });
   return { held, proceed, finished };
 }
 
-/** Pooled reads are fine out here: only the transaction above forbids them. */
-async function waitUntilSomeoneWaitsOnALock(): Promise<void> {
+/** Pooled reads are fine out here: only the transactions above forbid them. */
+async function waitUntilLockWaiters(count = 1): Promise<void> {
   for (let tries = 0; tries < 200; tries++) {
     const [waiting] = await query<{ n: number }>("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'");
-    if ((waiting?.n ?? 0) > 0) return;
+    if ((waiting?.n ?? 0) >= count) return;
     await new Promise(resolve => setTimeout(resolve, 25));
   }
   throw new Error('The agent-locking call never queued behind the held row.');
 }
+const waitUntilSomeoneWaitsOnALock = () => waitUntilLockWaiters(1);
 
 const outcome = (r: PromiseSettledResult<unknown>) => (r.status === 'rejected' ? String(r.reason) : r.status);
 
@@ -92,6 +98,39 @@ describe('agent row locks leave foreign-key checks alone', () => {
     const [source] = await radar.listSources(account.id);
     expect(source).toMatchObject({ kind: 'market_signal', enabled: true });
 
+    // recordStudioRiskObservation's own statement: the outbox row's foreign key to the binding is a
+    // KEY SHARE on that binding, which the owner's change must not hold against it.
+    const [binding] = await query<{ id: string }>('SELECT id FROM studio_risk_bindings WHERE agent_id=$1', [f.agentId]);
+    const crossing = (tx: Tx) => tx.query(
+      'INSERT INTO studio_risk_outbox(binding_id,source_id,observation_key,payload) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING',
+      [binding!.id, source!.id, `lock-order-${randomUUID()}`, { fixture: true }],
+    );
+    const polling = holder(tx => tx.one('SELECT id FROM radar_sources WHERE id=$1 FOR UPDATE', [source!.id]), f.agentId, crossing);
+    await polling.held;
+    const changing = runtime.setStudioRiskWatches(input);
+    await waitUntilSomeoneWaitsOnALock();
+    polling.proceed();
+    const [a, b] = await Promise.allSettled([polling.finished, changing]);
+    expect([a, b].map(outcome)).toEqual(['fulfilled', 'fulfilled']);
+    expect(await query('SELECT id FROM studio_risk_outbox WHERE binding_id=$1', [binding!.id])).toHaveLength(1);
+  });
+
+  it('AC1 changing a risk watch binding never deadlocks a poll that records an idea for the agent', async () => {
+    const f = await createFixture();
+    const key = newInstallationKey();
+    studio = await riskStudioServer(key);
+    process.env.AI17Z_STUDIO_UNSAFE_DEV_ORIGIN = studio.origin;
+    await ops.setSetting('studio.installation.key', sealSecret(JSON.stringify(key)));
+    await ops.setSetting('studio.link', { installationId: randomUUID(), origin: studio.origin, linkedAt: new Date().toISOString(), revokedAt: null });
+    const account = await accounts.createAccount({ ownerId: f.ownerId, channel: 'mock', handle: 'lock-order-idea' });
+    await accounts.updateAccount(account.id, { enabled: true, status: 'CONNECTED' });
+    await accounts.linkAgentAccount({ agentId: f.agentId, accountId: account.id });
+    await capabilities.grant(f.agentId, account.id, 'POST');
+    studio.state.watches = [{ id: randomUUID(), mint, kind: 'LIQUIDITY_BELOW', threshold: 100, interval_seconds: 14400 }];
+    const input = { agentId: f.agentId, ownerId: f.ownerId, accountId: account.id, enabled: true, mayTrigger: true };
+    expect((await runtime.setStudioRiskWatches(input)).ok).toBe(true);
+    await runtime.syncStudioRiskWatches();
+    const [source] = await radar.listSources(account.id);
     const polling = holder(tx => tx.one('SELECT id FROM radar_sources WHERE id=$1 FOR UPDATE', [source!.id]), f.agentId);
     await polling.held;
     const changing = runtime.setStudioRiskWatches(input);
@@ -100,6 +139,43 @@ describe('agent row locks leave foreign-key checks alone', () => {
     const [a, b] = await Promise.allSettled([polling.finished, changing]);
     expect([a, b].map(outcome)).toEqual(['fulfilled', 'fulfilled']);
     expect(await query('SELECT id FROM content_ideas WHERE agent_id=$1', [f.agentId])).toHaveLength(1);
+  });
+
+  it('AC1 changing coin alerts never deadlocks a sync that holds the binding and then needs the source', async () => {
+    // The owner's change used to take the agent, then the source, then the binding; a sync took
+    // the binding, then the source. Run in that order, each holds what the other wants next.
+    const f = await createFixture();
+    const key = newInstallationKey();
+    studio = await riskStudioServer(key);
+    process.env.AI17Z_STUDIO_UNSAFE_DEV_ORIGIN = studio.origin;
+    await ops.setSetting('studio.installation.key', sealSecret(JSON.stringify(key)));
+    await ops.setSetting('studio.link', { installationId: randomUUID(), origin: studio.origin, linkedAt: new Date().toISOString(), revokedAt: null });
+    const account = await accounts.createAccount({ ownerId: f.ownerId, channel: 'x', handle: `lock_order_${randomUUID().slice(0, 8)}` });
+    await accounts.updateAccount(account.id, { enabled: true, status: 'CONNECTED' });
+    await accounts.linkAgentAccount({ agentId: f.agentId, accountId: account.id });
+    studio.state.coinAlerts = { protocol: 1, generated_at: new Date().toISOString(), alerts: [{ mint }] };
+    const input = { agentId: f.agentId, ownerId: f.ownerId, accountId: account.id, enabled: true };
+    expect((await runtime.setStudioCoinAlerts(input)).ok).toBe(true);
+    await runtime.syncStudioCoinAlerts();
+    const [source] = await radar.listSources(account.id);
+    expect(source).toMatchObject({ kind: 'tracked_keyword', enabled: true });
+
+    // The sync is claimed and then held at Studio's answer, so its transaction opens only after
+    // the owner's change is already waiting on the source row.
+    let release!: () => void;
+    studio.state.coinAlertsGate = new Promise<void>(resolve => { release = resolve; });
+    const polling = holder(tx => tx.one('SELECT id FROM radar_sources WHERE id=$1 FOR UPDATE', [source!.id]), f.agentId, async () => undefined);
+    await polling.held;
+    await query('UPDATE studio_coin_alert_bindings SET next_sync_at=now()');
+    const syncing = runtime.syncStudioCoinAlerts();
+    for (let tries = 0; tries < 200 && !studio.requests.some(r => r.path === STUDIO_COIN_ALERTS_PATH && r.valid); tries++) await new Promise(resolve => setTimeout(resolve, 25));
+    const changing = runtime.setStudioCoinAlerts(input);
+    await waitUntilLockWaiters(1);
+    release();
+    await waitUntilLockWaiters(2);
+    polling.proceed();
+    const results = await Promise.allSettled([polling.finished, syncing, changing]);
+    expect(results.map(outcome)).toEqual(['fulfilled', 'fulfilled', 'fulfilled']);
   });
 
   it('AC1 importing a playbook never deadlocks a writer that holds the live mandate and records for the agent', async () => {
