@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { accounts, actions, agents, capabilities, jobs, ops, query, radar } from '@xbam/database';
+import { accounts, actions, agents, capabilities, jobs, ops, query, radar, withTransaction } from '@xbam/database';
 import { DEFAULT_POLICY, PolicyConfig, type SignalObservation } from '@xbam/shared/contracts';
 import { ingestNormalizedEvent } from '@xbam/runtime';
 import * as runtime from '@xbam/runtime';
@@ -248,4 +248,37 @@ it('applies a daily cap of three real follow-ups per agent', async () => {
   }
   await runtime.processEvidenceFollowUps(f.agentId);
   expect((await query('SELECT status, reason FROM evidence_followups WHERE id=$1', [row!.id]))[0]).toMatchObject({ status: 'skipped', reason: expect.stringMatching(/Daily evidence follow-up cap/) });
+});
+
+it('queueing a follow-up never deadlocks a transaction that holds the follow-up row and records for the agent', async () => {
+  // Queueing takes the agent row, then the follow-up row. Another transaction holding the
+  // follow-up row and then recording anything about the agent needs a KEY SHARE on agents.id, which
+  // FOR UPDATE refuses and FOR NO KEY UPDATE does not: each would be holding what the other wants.
+  const f = await setup();
+  await cross(f);
+  const [pending] = await followUps();
+  expect(pending).toMatchObject({ status: 'pending' });
+  let holding!: () => void;
+  let proceed!: () => void;
+  const held = new Promise<void>(resolve => { holding = resolve; });
+  const queued = new Promise<void>(resolve => { proceed = resolve; });
+  const recording = withTransaction(async tx => {
+    await tx.one('SELECT id FROM evidence_followups WHERE id=$1 FOR UPDATE', [pending!.id]);
+    holding();
+    await queued;
+    await tx.query("INSERT INTO content_ideas(agent_id,kind,summary,detail,source,score) VALUES($1,'observation','Lock order','detail','market_signal',50)", [f.agentId]);
+  });
+  await held;
+  const queueing = runtime.processEvidenceFollowUps(f.agentId);
+  for (let tries = 0; tries < 200; tries++) {
+    const [waiting] = await query<{ n: number }>("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'");
+    if ((waiting?.n ?? 0) >= 1) break;
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  proceed();
+  const [a, b] = await Promise.allSettled([recording, queueing]);
+  expect([a.status, b.status]).toEqual(['fulfilled', 'fulfilled']);
+  const [row] = await followUps();
+  expect(row).toMatchObject({ status: 'queued' });
+  expect(await query('SELECT id FROM content_ideas WHERE agent_id=$1', [f.agentId])).toHaveLength(1);
 });

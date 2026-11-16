@@ -19,6 +19,15 @@
 # nothing checks is a claim that stops being true without anybody noticing.
 set -uo pipefail
 
+# jq built for Windows ends every line it prints with CRLF. A trailing CR is
+# invisible in the log and fatal everywhere a value is compared or used as a
+# name: `[ "$(jq -r .draft f)" = false ]` never matches "false\r", and an asset
+# called "SHA256SUMS.txt\r" is a file that does not exist. Every use in this
+# script goes through this wrapper, so none of them can forget. Under
+# pipefail the pipeline still reports jq's own failure, and on Linux there is
+# no CR to remove.
+jq() { command jq "$@" | tr -d '\r'; }
+
 TAG="${1:?a tag, such as v1.0.0-beta.85}"
 VERSION="${TAG#v}"
 . "$(dirname "${BASH_SOURCE[0]}")/release-source.sh" || exit 2

@@ -188,7 +188,7 @@ async function queueFollowUp(row: Row, now: Date): Promise<{ reason: string; ret
   const idempotencyKey = sha256Hex(`${account.channel}:${account.id}:${remoteEventId}:REPLY:${agent.id}`);
   return withTransaction(async tx => {
     // One lock per agent serializes the daily cap across workers and accounts.
-    await tx.one('SELECT id FROM agents WHERE id=$1 FOR UPDATE', [agent.id]);
+    await tx.one('SELECT id FROM agents WHERE id=$1 FOR NO KEY UPDATE', [agent.id]);
     const current = await tx.one('SELECT status FROM evidence_followups WHERE id=$1 FOR UPDATE', [row.id]);
     if (current?.status !== 'pending') return null;
     const today = await tx.one<{ n: number }>(`SELECT count(*)::int AS n FROM evidence_followups WHERE agent_id=$1 AND status='queued'

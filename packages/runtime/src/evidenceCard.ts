@@ -265,7 +265,7 @@ export async function researchEvidenceCard(bundle: JobBundle): Promise<boolean> 
       // One agent lock covers both caps, including different mints from one asker.
       // The row survives restarts and reserves a read before any upstream I/O.
       const reserved = await withTransaction(async tx => {
-        await tx.one('SELECT id FROM agents WHERE id=$1 FOR UPDATE', [bundle.agent.id]);
+        await tx.one('SELECT id FROM agents WHERE id=$1 FOR NO KEY UPDATE', [bundle.agent.id]);
         const prior = await tx.one('SELECT card_job_id FROM evidence_card_requests WHERE job_id=$1', [bundle.job.id]);
         if (prior) return { card: prior.card_job_id as string | null, capped: false };
         const requester = `${bundle.job.channel}:${bundle.event.remoteAuthorId ?? bundle.event.remoteAuthorHandle ?? 'unknown'}`;
@@ -385,7 +385,7 @@ export async function researchEvidenceMove(bundle: JobBundle): Promise<boolean> 
     } else {
       const requester = `${bundle.job.channel}:${bundle.event.remoteAuthorId ?? bundle.event.remoteAuthorHandle ?? 'unknown'}`;
       const reserved = await withTransaction(async tx => {
-        await tx.one('SELECT id FROM agents WHERE id=$1 FOR UPDATE', [bundle.agent.id]);
+        await tx.one('SELECT id FROM agents WHERE id=$1 FOR NO KEY UPDATE', [bundle.agent.id]);
         const prior = await tx.one('SELECT card_job_id FROM evidence_move_requests WHERE job_id=$1', [bundle.job.id]);
         if (prior) return { kind: 'ok' as const, card: prior.card_job_id as string | null };
         if (await mintReadsThisHour(tx, bundle.agent.id, requester, bundle.job.dryRun) + MOVE_READS > HOURLY_CAP) return { kind: 'capped' as const };
@@ -489,7 +489,7 @@ export async function researchEvidenceTransaction(bundle: JobBundle): Promise<bo
     } else {
       const requester = `${bundle.job.channel}:${bundle.event.remoteAuthorId ?? bundle.event.remoteAuthorHandle ?? 'unknown'}`;
       const reserved = await withTransaction(async db => {
-        await db.one('SELECT id FROM agents WHERE id=$1 FOR UPDATE', [bundle.agent.id]);
+        await db.one('SELECT id FROM agents WHERE id=$1 FOR NO KEY UPDATE', [bundle.agent.id]);
         const prior = await db.one('SELECT card_job_id FROM evidence_transaction_requests WHERE job_id=$1', [bundle.job.id]);
         if (prior) return { kind: 'ok' as const, card: prior.card_job_id as string | null };
         const spent = await db.one(`SELECT coalesce(sum(reads), 0)::int AS n FROM evidence_transaction_requests
@@ -591,7 +591,7 @@ export async function researchEvidenceCompare(bundle: JobBundle): Promise<boolea
       const requester = `${bundle.job.channel}:${bundle.event.remoteAuthorId ?? bundle.event.remoteAuthorHandle ?? 'unknown'}`;
       // The same agent lock as a single card, so a pair and a single cannot both slip under one cap.
       const reserved = await withTransaction(async tx => {
-        await tx.one('SELECT id FROM agents WHERE id=$1 FOR UPDATE', [bundle.agent.id]);
+        await tx.one('SELECT id FROM agents WHERE id=$1 FOR NO KEY UPDATE', [bundle.agent.id]);
         if (await tx.one('SELECT job_id FROM evidence_compare_requests WHERE job_id=$1 LIMIT 1', [bundle.job.id])) return 'ok' as const;
         if (await mintReadsThisHour(tx, bundle.agent.id, requester, bundle.job.dryRun) + 2 > HOURLY_CAP) return 'capped' as const;
         const recent = await tx.one(`SELECT 1 AS hit WHERE EXISTS (SELECT 1 FROM evidence_card_requests
@@ -747,7 +747,7 @@ async function rereadEvidenceCard(bundle: JobBundle, card: EvidenceCard): Promis
   const address = request.address.startsWith('0x') ? request.address.toLowerCase() : request.address;
   // One row per job. A re-read refreshes that row's time under the same agent lock the first read uses.
   const reserved = await withTransaction(async tx => {
-    await tx.one('SELECT id FROM agents WHERE id=$1 FOR UPDATE', [bundle.agent.id]);
+    await tx.one('SELECT id FROM agents WHERE id=$1 FOR NO KEY UPDATE', [bundle.agent.id]);
     if (await mintReadsThisHour(tx, bundle.agent.id, requester, bundle.job.dryRun) >= HOURLY_CAP) return false;
     // This job's own read is the card being refreshed, so it does not cool itself down.
     const previous = await tx.one(`SELECT job_id FROM evidence_card_requests
