@@ -52,4 +52,5 @@ export * from './devUpdatesInstall';
 export * from './studioActivityTape';
 export * from './studioCheckBoard';
 export * from './studioRisk';
+export * from './studioCoinAlerts';
 export * from './evidenceFollowUp';

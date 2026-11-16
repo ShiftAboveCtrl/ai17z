@@ -76,7 +76,7 @@ describe('a public post', () => {
   it('is off by default, in both switches', () => {
     expect(DEFAULT_POLICY.studio.postPaperRecord).toBe(false);
     expect(DEFAULT_POLICY.studio.postPaperPnl).toBe(false);
-    expect(PolicyConfig.parse({}).studio).toEqual({ postPaperRecord: false, postPaperPnl: false, paperRecordWindow: '7d', linkPaperRecord: false, postTraderDna: false, traderDnaStudyId: null, contributeChecks: false, postMostChecked: false });
+    expect(PolicyConfig.parse({}).studio).toEqual({ postPaperRecord: false, postPaperPnl: false, paperRecordWindow: '7d', linkPaperRecord: false, postTraderDna: false, traderDnaStudyId: null, contributeChecks: false, postMostChecked: false, postReceiptsRecap: false, receiptsRecapImage: false });
   });
 
   it('is only made from a finished window that had trades', () => {

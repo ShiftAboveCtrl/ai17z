@@ -226,6 +226,18 @@ export function validateOutput(
    * model happened to produce.
    */
   provenLink?: string | readonly string[] | null,
+  /**
+   * Addresses the runtime itself read from a transaction for a deterministic
+   * transaction reading. They came from the chain, not from a model, and the
+   * send check holds the text to exactly what that reading renders, so a model
+   * cannot add one. Any address outside this list is still held.
+   */
+  provenAddresses?: readonly string[] | null,
+  /**
+   * Whole lines the runtime built from addresses it read off the chain itself, such as the
+   * deployer line on an evidence card. Only a line equal to one of these is exempt.
+   */
+  provenLines?: readonly string[] | null,
 ): ValidationResult {
   const violations: Violation[] = [];
   let output = raw.replace(/\r\n/g, '\n').trim();
@@ -350,15 +362,17 @@ export function validateOutput(
   // address, either in the policy list or in the text they wrote for it.
   const givenAddresses = new Set<string>(policy.output.verifiedAddresses);
   for (const written of addressesIn(operatorText ?? '')) givenAddresses.add(written);
+  for (const read of provenAddresses ?? []) givenAddresses.add(read);
 
   // The check page line the runtime built is not a model writing an address: it
   // is the one link this agent proved by reading the mint itself. Only that
   // exact line is exempt. The same mint anywhere else, or any other address, is
   // still held, so a link the model wrote is caught exactly as before.
   // A comparison carries one proven line per side, already complete.
-  const provenLines = new Set(typeof provenLink === 'string' ? [`${CHECK_LINK_PREFIX}${provenLink}`] : provenLink ?? []);
-  const addressScan = provenLines.size
-    ? output.split('\n').filter((line) => !provenLines.has(line)).join('\n')
+  const provenCheckLines = new Set(typeof provenLink === 'string' ? [`${CHECK_LINK_PREFIX}${provenLink}`] : provenLink ?? []);
+  const exempt = new Set<string>([...provenCheckLines, ...(provenLines ?? [])]);
+  const addressScan = exempt.size
+    ? output.split('\n').filter((line) => !exempt.has(line)).join('\n')
     : output;
 
   for (const found of addressesIn(addressScan)) {

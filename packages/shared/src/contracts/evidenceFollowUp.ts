@@ -16,3 +16,7 @@ export function isEvidenceFollowUpEvent(payload: unknown): boolean {
 
 /** The two sides of a mint comparison, as stored in `evidence_compare_requests.side` (CHECK IN (0, 1)). */
 export const EVIDENCE_COMPARE_SIDES = [0, 1] as const;
+
+/** The windows a "why is it moving" ask can name, as stored in `evidence_move_requests.window` (CHECK). The source reports exactly these. */
+export const EVIDENCE_MOVE_WINDOWS = ['5m', '1h', '6h', '24h'] as const;
+export type EvidenceMoveWindow = (typeof EVIDENCE_MOVE_WINDOWS)[number];

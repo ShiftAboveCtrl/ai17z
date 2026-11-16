@@ -274,7 +274,7 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
           label: z.string().max(120).default(''),
           enabled: z.boolean().default(true),
           // The link markers are written by their own syncs only, so an owner cannot forge one.
-          config: RadarSourceConfig.partial().extend({ mayTrigger: z.boolean().optional(), studioRisk: z.never().optional(), playbookAgentId: z.never().optional(), playbookPinId: z.never().optional() }).prefault({}),
+          config: RadarSourceConfig.partial().extend({ mayTrigger: z.boolean().optional(), studioRisk: z.never().optional(), playbookAgentId: z.never().optional(), playbookPinId: z.never().optional(), coinAlertAgentId: z.never().optional() }).prefault({}),
         }),
         request,
       );

@@ -513,6 +513,21 @@ export function PoliciesSection({
           </Field>
         </Group>
 
+        <Group title="Weekly receipts recap" blurb="Whether the agent may post a weekly recap of the radar signals it published. Counts and measured readings with their sources and times, never a win rate, profit or ranking.">
+          <Toggle
+            label="Let it post a weekly receipts recap"
+            description="Once a week it may write one post counting every radar signal it published in the last 7 days and what each stated reading was 24 hours later, with the sample size as n = a number. Drafts and dry runs are never counted. Needs the posting schedule running."
+            checked={draft.studio.postReceiptsRecap}
+            onChange={(v) => patch((n) => void (n.studio.postReceiptsRecap = v))}
+          />
+          <Toggle
+            label="Attach a picture of the recap from Studio"
+            description="Needs a linked Studio that serves the recap picture. Only the counts and readings in the post are sent, never a handle or post text. If Studio does not answer, the post goes out as text."
+            checked={draft.studio.receiptsRecapImage}
+            onChange={(v) => patch((n) => void (n.studio.receiptsRecapImage = v))}
+          />
+        </Group>
+
         {/*
           Off, and not offered by Easy Mode. A study is research about other
           people's wallets: the post may report what survived the luck filters,
