@@ -1,5 +1,6 @@
 import { createLogger, errorMessage, refersToSomethingElse } from '@xbam/shared';
-import { ask, type MarketPairs, type MarketQuery } from '@xbam/upstream';
+import type { EvidenceMoveWindow } from '@xbam/shared/contracts';
+import { ask, isSignature, type MarketPairs, type MarketQuery } from '@xbam/upstream';
 import { describeToken, mergeReferences, parseTokenReference, resolveToken } from './token';
 
 const log = createLogger('research');
@@ -28,6 +29,76 @@ export function evidenceCardRequest(text: string): { address?: string; chain?: s
     return { refusal: 'Please provide an exact address on a supported token evidence chain.' };
   }
   return { address: reference.address, chain };
+}
+
+const MOVE_ASK = /\b(?:why|what(?:'s| is| was| has)?)\b[^.?!\n]{0,200}\b(?:moving|moved|pumping|pumped|dumping|dumped|mooning|ripping|rallying|rallied|spiking|spiked|crashing|crashed|tanking|tanked|bleeding|dropping|dropped|falling|fell|rising|rose|jumping|jumped|sinking|sunk|up|down|red|green|changed|happening|happened)\b/i;
+const MOVE_UNSUPPORTED = 'I read windows of 5 minutes, 1 hour, 6 hours or 24 hours. Please pick one of those.';
+
+/** The window an ask names, or null when it names none. A named window the source does not report is a refusal, never a nearest guess. */
+function moveWindowOf(text: string): EvidenceMoveWindow | 'unsupported' | null {
+  const clean = text.replace(/https?:\/\/\S+/g, ' ');
+  const given = clean.match(/\b(\d{1,3})\s*(m|min|mins|minutes?|h|hr|hrs|hours?|d|days?)\b/i);
+  if (given) {
+    const unit = given[2]!.toLowerCase()[0]!;
+    const minutes = Number(given[1]) * (unit === 'm' ? 1 : unit === 'h' ? 60 : 1440);
+    const hit = ({ 5: '5m', 60: '1h', 360: '6h', 1440: '24h' } as Record<number, EvidenceMoveWindow>)[minutes];
+    return hit ?? 'unsupported';
+  }
+  if (/\b(?:today|past day|last day|a day)\b/i.test(clean)) return '24h';
+  if (/\b(?:last|past|in an?|this)\s+hour\b/i.test(clean)) return '1h';
+  if (/\b(?:few|last|past)\s+minutes\b/i.test(clean)) return '5m';
+  return null;
+}
+
+/**
+ * "Why is X moving" about exactly one exact mint. The answer is readings, never a story.
+ *
+ * Null when the message is not that ask, or names nothing token-shaped (so "why is
+ * it down" under a post is left to the ordinary reply). Identity is decided by the
+ * single card's own rules: a ticker, two addresses or a missing chain get a sentence.
+ * Default window is one hour.
+ */
+export function evidenceMoveRequest(text: string): { address: string; chain: string; window: EvidenceMoveWindow; refusal?: undefined } | { refusal: string } | null {
+  if (!MOVE_ASK.test(text)) return null;
+  // Two addresses in one message are a side by side, so the compare path answers it.
+  if (evidenceCompareRequest(text) !== null) return null;
+  const identity = evidenceCardRequest(text);
+  if (!identity) return null;
+  if (identity.refusal || !identity.address || !identity.chain) return { refusal: identity.refusal ?? 'Please provide one exact token address and its chain.' };
+  const window = moveWindowOf(text);
+  if (window === 'unsupported') return { refusal: MOVE_UNSUPPORTED };
+  return { address: identity.address, chain: identity.chain, window: window ?? '1h' };
+}
+
+const EXPLAIN_ASK = /\b(?:explain|what\s+(?:did|does|do|is|was|happened|went|exactly)|decode|read|break\s*down|walk\s*(?:me\s*)?through|tell\s+me\s+about|translate|check|look\s+(?:at|into)|make\s+sense|tx|txn|transaction|signature|sig)\b/i;
+const EXPLAIN_WHOSE = /\b(?:whose|who(?:'s|\s+is|\s+owns|\s+made|\s+sent|\s+did|\s+was)|who\s+(?:are|is)\s+(?:the\s+)?(?:wallet|sender|owner|person)|which\s+(?:wallet|person|handle|account)|belongs?\s+to|dox|identify)\b/i;
+const BASE58_RUN = /[1-9A-HJ-NP-Za-km-z]{80,100}/g;
+const SOLANA_ADDRESS_SHAPE = /\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/;
+
+/**
+ * "What did this transaction do" about exactly one Solana signature.
+ *
+ * A signature is a run of 80 or more base58 characters, so it is found inside an
+ * explorer link too. It has to decode to 64 bytes: a run that does not is refused
+ * with a sentence, never trimmed or repaired into one that does. Two signatures are
+ * refused (one per ask), as is a question about whose it is. A message that also
+ * names a token address is a token ask and is left to the card path. Null for any
+ * other message, so a long base58 string alone does not make a reply.
+ */
+export function explainTransactionRequest(text: string): { signature: string; refusal?: undefined } | { refusal: string } | null {
+  const runs = [...new Set(text.match(BASE58_RUN) ?? [])];
+  if (runs.length === 0) return null;
+  if (SOLANA_ADDRESS_SHAPE.test(text.replace(/https?:\/\/\S+/g, ' ').replace(BASE58_RUN, ' '))) return null;
+  // Asking whose a signature is gets the refusal even without an explain word.
+  if (EXPLAIN_WHOSE.test(text)) {
+    return { refusal: 'I only state what a transaction shows on chain. I do not say who an address belongs to.' };
+  }
+  if (!EXPLAIN_ASK.test(text.replace(BASE58_RUN, ' '))) return null;
+  if (runs.length > 1) return { refusal: 'One transaction at a time, please. Send a single signature.' };
+  if (!isSignature(runs[0]!)) {
+    return { refusal: 'That does not decode to a transaction signature (64 bytes of base58). Please check it and send it again as it is.' };
+  }
+  return { signature: runs[0]! };
 }
 
 const COMPARE_CHAINS = ['solana', 'ethereum', 'bnb', 'base', 'polygon', 'arbitrum', 'optimism', 'avalanche', 'robinhood'];
