@@ -63,6 +63,8 @@ export interface DevUpdate {
   why: string;
   evidence: { type: string; ref: string | null; detail: string }[];
   post: string;
+  parts?: string[];
+  proposedParts?: string[];
   /** Absent on an update from before attachments existed. */
   media?: DevUpdateMedia[];
   proposedPost: string;

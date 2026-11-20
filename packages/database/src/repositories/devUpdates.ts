@@ -93,6 +93,8 @@ export interface DevUpdateRow {
   why: string;
   evidence: DevUpdateEvidence[];
   postText: string;
+  parts?: string[] | null;
+  approvedParts?: string[] | null;
   approvedText: string | null;
   factFingerprint: string;
   textFingerprint: string;
@@ -348,6 +350,7 @@ export async function insertUpdate(
     why: string;
     evidence: DevUpdateEvidence[];
     postText: string;
+    parts?: string[];
     factFingerprint: string;
     textFingerprint: string;
     evidenceKeys: string[];
@@ -361,8 +364,8 @@ export async function insertUpdate(
   const row = await tx.one(
     `INSERT INTO dev_updates
        (project_id, kind, title, summary, why, evidence, post_text, fact_fingerprint, text_fingerprint,
-        evidence_keys, client_request_id, status, status_reason, history, media)
-     VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10::text[],$11,$12,$13,$14::jsonb,$15::jsonb)
+        evidence_keys, client_request_id, status, status_reason, history, media, parts)
+     VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10::text[],$11,$12,$13,$14::jsonb,$15::jsonb,$16::jsonb)
      RETURNING *`,
     [
       input.projectId,
@@ -380,6 +383,7 @@ export async function insertUpdate(
       input.statusReason,
       JSON.stringify(input.history),
       JSON.stringify(input.media ?? []),
+      input.parts ? JSON.stringify(input.parts) : null,
     ],
   );
   return mapRow<DevUpdateRow>(row) as DevUpdateRow;
@@ -485,6 +489,7 @@ export async function transition(
     reason: string;
     actor: DevUpdateHistoryEntry['actor'];
     approvedText?: string | null;
+    approvedParts?: string[] | null;
     decidedBy?: string | null;
     jobId?: string | null;
     remoteUrl?: string | null;
@@ -508,6 +513,7 @@ export async function transition(
     sets.push(fragment.replace('$?', `$${params.length}`));
   };
   if (input.approvedText !== undefined) push('approved_text = $?', input.approvedText);
+  if (input.approvedParts !== undefined) push('approved_parts = $?::jsonb', input.approvedParts ? JSON.stringify(input.approvedParts) : null);
   if (input.decidedBy !== undefined) {
     push('decided_by = $?', input.decidedBy);
     sets.push('decided_at = now()');
@@ -517,7 +523,7 @@ export async function transition(
   if (input.dispatched) sets.push('dispatched_at = now()');
   if (input.finished) sets.push('finished_at = now()');
   if (input.scrub) {
-    sets.push(`title = '', summary = '', why = '', evidence = '[]'::jsonb, post_text = '', approved_text = NULL, media = '[]'::jsonb`);
+    sets.push(`title = '', summary = '', why = '', evidence = '[]'::jsonb, post_text = '', approved_text = NULL, media = '[]'::jsonb, parts = NULL, approved_parts = NULL`);
   }
   const sql = `UPDATE dev_updates SET ${sets.join(', ')} WHERE id = $1 AND status = ANY($2::text[]) RETURNING *`;
   const row = tx ? await tx.one(sql, params) : await queryOne(sql, params);
@@ -595,7 +601,7 @@ export async function countInFlight(tx: Tx, projectId: string): Promise<number> 
  */
 export async function sentWindow(projectId: string, excludeJobId: string | null = null): Promise<{ lastDay: number; lastSentAt: string | null; oldestInDayAt: string | null }> {
   const row = await queryOne<{ last_day: number; last_at: Date | null; oldest_at: Date | null }>(
-    `SELECT count(*) FILTER (WHERE a.executed_at > now() - interval '24 hours')::int AS last_day,
+    `SELECT count(DISTINCT u.id) FILTER (WHERE a.executed_at > now() - interval '24 hours')::int AS last_day,
             max(a.executed_at) AS last_at,
             min(a.executed_at) FILTER (WHERE a.executed_at > now() - interval '24 hours') AS oldest_at
        FROM dev_updates u

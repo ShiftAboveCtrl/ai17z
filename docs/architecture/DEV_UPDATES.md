@@ -63,6 +63,30 @@ words.
 | MCP server (plain Node, no dependencies) | `tools/dev-updates-mcp.mjs` |
 | Owner CLI | `tools/dev-updates.mts` (`npm run dev-updates -- help`) |
 
+## Threads
+
+Send `parts` instead of `post` for a detailed update: one to six strings, each
+at most 280 Unicode code points. A one-part array becomes the existing single
+post representation. Multi-part updates retain their proposed and approved
+parts in migration 0143. The Review screen shows every part and its count;
+one owner decision approves the complete thread. Edit it before dispatch with
+`editedParts`, preserving its part count. The CLI accepts
+`approve <updateId> --parts-file <json-file>` and can prepare a word-boundary
+split with `npm run dev-updates -- split --text "long update prose"`.
+
+The account must grant both POST and REPLY. Part one is an original post;
+later parts reply to the previous part's confirmed status id. Every part uses
+the ordinary executor with a key and content signature derived from the update
+id and zero-based part index. Safety and policy check the complete thread before
+any send, then repeat at each send. Existing cadence, rate and pause gates can
+hold a thread between parts. A failure stops publishing; recovery skips durable
+completed parts and asks `wasAlreadyDone` before retrying an unsettled attempt.
+Unknown remote outcomes stop without sending again. Every section needs a read
+back and a published status id before the next one can start. Attachments go
+with the first part. The project ceiling counts a thread as one update, while
+account action limits still count every published part. Rehearsal checks every
+section without creating a public reply target.
+
 ## Attachments
 
 An update can carry a screenshot, a creative file or a short video. The MCP

@@ -68,6 +68,7 @@ function Draft({
 }) {
   const [mode, setMode] = useState<'read' | 'edit' | 'reject'>('read');
   const [text, setText] = useState(update.post);
+  const [parts, setParts] = useState(update.parts ?? []);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [decided, setDecided] = useState<'approve' | 'reject' | null>(null);
@@ -89,6 +90,8 @@ function Draft({
     const body =
       what === 'reject'
         ? { note: note.trim() }
+        : mode === 'edit' && update.parts
+          ? { editedParts: parts.map((part) => part.trim()) }
         : mode === 'edit' && text.trim() !== update.post
           ? { editedText: text.trim() }
           : {};
@@ -107,7 +110,7 @@ function Draft({
     onDecided();
   };
 
-  const tooLong = text.trim().length > POST_MAX_CHARS;
+  const tooLong = update.parts ? parts.some((part) => [...part.trim()].length > POST_MAX_CHARS || !part.trim()) : [...text.trim()].length > POST_MAX_CHARS;
   const disabled = busy || decided !== null || update.status !== 'PENDING_REVIEW';
 
   return (
@@ -155,8 +158,23 @@ function Draft({
         </div>
 
         <div className="space-y-4 border-t border-ink-line bg-ink-panel/60 p-4 sm:p-5 lg:border-l lg:border-t-0">
-          <p className="eyebrow text-bone-dim">{rehearse ? 'The post, as it would appear' : 'The post'}</p>
-          <PostPreview agent={agent} handle={handle} text={update.post} edited={update.edited} media={update.media}>
+          <p className="eyebrow text-bone-dim">{update.parts ? 'The complete thread' : rehearse ? 'The post, as it would appear' : 'The post'}</p>
+          {update.parts ? (
+            <ol aria-label="Thread parts in publishing order" className="space-y-4">
+              {parts.map((part, index) => (
+                <li key={index} className="space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <label htmlFor={`${editId}-${index}`} className="eyebrow text-bone-dim">Part {index + 1} of {parts.length}</label>
+                    <CharMeter length={[...part.trim()].length} />
+                  </div>
+                  <PostPreview agent={agent} handle={handle} text={part} edited={update.edited} media={index === 0 ? update.media : undefined}>
+                    {mode === 'edit' ? <textarea id={`${editId}-${index}`} className="field mt-3 min-h-[140px] resize-y text-[15px] leading-relaxed"
+                      value={part} disabled={disabled} onChange={(event) => setParts((current) => current.map((value, i) => i === index ? event.target.value : value))} /> : undefined}
+                  </PostPreview>
+                </li>
+              ))}
+            </ol>
+          ) : <PostPreview agent={agent} handle={handle} text={update.post} edited={update.edited} media={update.media}>
             {mode === 'edit' ? (
               <div className="mt-3 space-y-2">
                 <label htmlFor={editId} className="sr-only">
@@ -172,11 +190,11 @@ function Draft({
                   onChange={(e) => setText(e.target.value)}
                 />
                 <div className="flex justify-end">
-                  <CharMeter length={text.trim().length} />
+                  <CharMeter length={[...text.trim()].length} />
                 </div>
               </div>
             ) : undefined}
-          </PostPreview>
+          </PostPreview>}
 
           {mode === 'reject' && (
             <div className="space-y-2">
@@ -225,6 +243,7 @@ function Draft({
                     onClick={() => {
                       setMode('read');
                       setText(update.post);
+                      setParts(update.parts ?? []);
                       setProblem(null);
                     }}
                   >

@@ -203,6 +203,15 @@ export async function contentAlreadySent(agentId: string, contentSignature: stri
   return (row?.count ?? 0) > 0;
 }
 
+/** Thread preflight checks every section before sending any, excluding its own resume. */
+export async function threadTextAlreadySent(agentId: string, accountId: string, jobId: string, texts: string[]): Promise<boolean> {
+  return Boolean(await queryOne(
+    `SELECT id FROM actions WHERE agent_id = $1 AND account_id = $2 AND job_id <> $3
+      AND status = 'EXECUTED' AND NOT dry_run AND payload->>'text' = ANY($4::text[]) LIMIT 1`,
+    [agentId, accountId, jobId, texts],
+  ));
+}
+
 export async function createApproval(jobId: string, originalOutput: string): Promise<Approval> {
   const row = await queryOne(
     `INSERT INTO approvals (job_id, original_output) VALUES ($1,$2)

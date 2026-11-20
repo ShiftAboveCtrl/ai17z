@@ -55,6 +55,8 @@ export const DevUpdateSubmissionInput = z.object({
   disclosure: z.string(),
   /** A post the sender wrote. Absent means AI17Z composes one from the facts. */
   post: z.string().trim().min(1).max(400).optional(),
+  /** Explicit thread text. A one-part array keeps the ordinary post shape. */
+  parts: z.array(z.string().trim().min(1).max(560)).min(1).max(6).optional(),
   /**
    * Files uploaded first (`POST /api/dev-updates/sender/media`) that go with the
    * post, by the id that upload returned. Ids, never paths: nothing here names
@@ -69,7 +71,7 @@ export const DevUpdateSubmissionInput = z.object({
     .trim()
     .regex(/^[A-Za-z0-9._:-]{8,100}$/, 'Use 8 to 100 letters, digits, dots, colons, dashes or underscores.')
     .optional(),
-});
+}).refine((input) => !(input.post && input.parts), { message: 'Use post or parts, never both.', path: ['parts'] });
 export type DevUpdateSubmissionInput = z.infer<typeof DevUpdateSubmissionInput>;
 
 export type DevUpdateRefusalCode =
@@ -110,6 +112,21 @@ export interface DevUpdateRefusal {
 
 export const PUBLIC_DISCLOSURE = 'PUBLIC';
 export const POST_MAX_CHARS = 280;
+
+/** Split prose at whitespace; never truncate a word or a Unicode code point. */
+export function splitDevUpdate(text: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  for (const word of text.trim().split(/\s+/u)) {
+    if ([...word].length > POST_MAX_CHARS) throw new Error('A word exceeds 280 code points. Supply explicit parts.');
+    const next = current ? `${current} ${word}` : word;
+    if ([...next].length > POST_MAX_CHARS) { parts.push(current); current = word; }
+    else current = next;
+  }
+  if (current) parts.push(current);
+  if (!parts.length || parts.length > 6) throw new Error('An update needs one to six parts.');
+  return parts;
+}
 
 // ── Secrets ─────────────────────────────────────────────────────────────────
 

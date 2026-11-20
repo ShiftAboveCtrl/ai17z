@@ -1,5 +1,13 @@
 # Radar evidence extension
 
+## Development update thread review
+
+Preserve the existing Review panel, typography, spacing and focus styles. Show
+thread parts as an ordered list, each labelled with its position and Unicode
+code point count. Keep one approval for the complete thread and labelled text
+fields for editing each part. Stack the previews naturally at mobile widths;
+attachments belong to the first part. No new decorative motion or visual tokens.
+
 Evidence-card opt-in: reuse the existing labelled Toggle in Easy Mode reply
 filters and Advanced policy settings. Default off, explicit save, wrapping
 explanation. Keep the existing tokens, spacing and keyboard focus treatment.
