@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DevUpdateSubmissionInput, checkPostText, splitDevUpdate } from '../../packages/runtime/src/devUpdateSafety';
-import { replyTargetAllowed } from '../../packages/channels/src/x/targets';
+import { replyTargetAllowed, verifyAnchoredAction } from '../../packages/channels/src/x/targets';
 
 describe('development update parts', () => {
   it('preserves paragraph breaks and prefers complete sentences', () => {
@@ -47,5 +47,27 @@ describe('exact reply target decision without an adapter', () => {
   });
   it('refuses an anchor mismatch even for the recorded continuation', () => {
     expect(replyTargetAllowed({ ...base, anchoredStatusId: '987654', previousPartStatusId: '123456' })).toBe(false);
+  });
+  it('refuses a like or a repost even when the previous part id matches', () => {
+    for (const type of ['LIKE', 'REPOST']) {
+      expect(replyTargetAllowed({ ...base, type, previousPartStatusId: '123456' })).toBe(false);
+    }
+  });
+  it('passes request.threadContinuation through the check verifyAction applies to the article', () => {
+    const snapshot = { statusId: '123456', authorHandle: 'self', text: 'The previous part.' };
+    const reply = verifyAnchoredAction({
+      request: { type: 'REPLY', threadContinuation: { previousPartStatusId: '123456' } },
+      statusId: '123456', selfHandles: ['self'], snapshot,
+    });
+    expect(reply.verified).toBe(true);
+    expect(reply.evidence.previousPartStatusId).toBe('123456');
+    for (const type of ['LIKE', 'REPOST'] as const) {
+      const refused = verifyAnchoredAction({
+        request: { type, threadContinuation: { previousPartStatusId: '123456' } },
+        statusId: '123456', selfHandles: ['self'], snapshot,
+      });
+      expect(refused.verified).toBe(false);
+      expect(refused.evidence.previousPartStatusId).toBe('123456');
+    }
   });
 });

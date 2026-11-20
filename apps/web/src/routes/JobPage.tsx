@@ -139,7 +139,9 @@ export function JobPage() {
               {output}
             </p>
           )}
-          <p className="mt-2 font-mono text-[10px] text-bone-faint">{output.length} characters</p>
+          <p className="mt-2 font-mono text-[10px] text-bone-faint">{data.threadParts
+            ? `${Math.max(...data.threadParts.map((part) => [...part].length))} characters in the longest part`
+            : `${output.length} characters`}</p>
           {data.threadParts && <Link to="/dev-updates" className="btn-quiet mt-2">Edit the complete thread in Development updates</Link>}
 
           {decidable && (

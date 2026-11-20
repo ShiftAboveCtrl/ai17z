@@ -9,6 +9,53 @@
 
 const X_HOST = 'x.com';
 
+/**
+ * The exact-target check inside verifyAction, given the article the page returned.
+ *
+ * The request's own `threadContinuation` is what reaches the decision. A like
+ * or a repost that names the previous part is still refused, and a reply that
+ * omits the continuation is refused too. The article is an argument, so a test
+ * can supply one without opening a browser.
+ */
+export function verifyAnchoredAction(input: {
+  request: { type: string; threadContinuation?: { previousPartStatusId: string } };
+  statusId: string;
+  selfHandles: readonly string[];
+  snapshot: { statusId: string | null; authorHandle: string | null; text: string };
+}): { verified: boolean; detail: string; evidence: Record<string, unknown>; authorHandle: string | null } {
+  const snapshot = input.snapshot;
+  if (snapshot.statusId !== input.statusId) {
+    return {
+      verified: false,
+      detail: `Anchored article reports status ${snapshot.statusId ?? 'unknown'}, expected ${input.statusId}.`,
+      authorHandle: snapshot.authorHandle,
+      evidence: { anchoredStatusId: snapshot.statusId },
+    };
+  }
+  const previousPartStatusId = input.request.threadContinuation?.previousPartStatusId;
+  if (!replyTargetAllowed({
+    type: input.request.type,
+    targetStatusId: input.statusId,
+    anchoredStatusId: snapshot.statusId,
+    authorHandle: snapshot.authorHandle,
+    selfHandles: input.selfHandles,
+    previousPartStatusId,
+  })) {
+    return {
+      verified: false,
+      detail: `The target post belongs to this account (@${snapshot.authorHandle}). Refusing to self-reply.`,
+      authorHandle: snapshot.authorHandle,
+      evidence: { selfReply: true, previousPartStatusId: previousPartStatusId ?? null },
+    };
+  }
+  return {
+    verified: true,
+    detail: `Anchored to status ${input.statusId} by @${snapshot.authorHandle ?? 'unknown'}.`,
+    authorHandle: snapshot.authorHandle,
+    evidence: { statusId: input.statusId, author: snapshot.authorHandle, textPreview: snapshot.text.slice(0, 200), previousPartStatusId: previousPartStatusId ?? null },
+  };
+}
+
 /** A continuation permits only the exact previous status confirmed by the runtime. */
 export function replyTargetAllowed(input: {
   type: string;

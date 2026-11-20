@@ -242,7 +242,7 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
     await jobsRepo.updateJob(bundle.job.id, { status: 'EXECUTED', touch: ['executedAt'], releaseLock: true });
     return;
   }
-  const admitted = bundle.job.resolvedContext?.meta.devUpdateAdmission === update.id;
+  const admitted = update.threadAdmittedAt !== null;
   // Preflight the whole unit before the first action claim or send.
   await checkDevUpdateAtSend({ raw, jobId: bundle.job.id, agentId: bundle.agent.id,
     accountId: bundle.job.accountId, dryRun: bundle.job.dryRun, text: bundle.job.validatedOutput ?? '',
@@ -259,10 +259,11 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
   if (!bundle.job.dryRun && !admitted) {
     const rate = await checkActionRate(bundle.agent.id, bundle.policy, bundle.job.accountId, capacityClassForEvent(bundle.event.type), parts.length);
     if (!rate.allow) throw PipelineError.retryable(rate.reason, rate.message, { retryAfterMs: rate.retryAfterMs });
-    // The account lease protects admission. Outstanding sections remain counted across retries.
-    const resolvedContext = { ...bundle.job.resolvedContext!, meta: { ...bundle.job.resolvedContext?.meta, devUpdateAdmission: update.id } };
-    await jobsRepo.updateJob(bundle.job.id, { resolvedContext });
-    bundle = { ...bundle, job: { ...bundle.job, resolvedContext } };
+    // The account lease protects admission. The stamp lives on the update, so a
+    // later rewrite of resolved context cannot admit the thread a second time.
+    if (!(await devUpdatesRepo.admitThread(update.id))) {
+      throw PipelineError.review('dev_update_admission_lost', 'This thread was not admitted. Nothing more was sent.');
+    }
   }
   let targetRef: string | null = null;
   for (let index = 0; index < parts.length; index += 1) {
@@ -375,7 +376,7 @@ async function executePart(bundle: JobBundle, threadPart?: ThreadPart): Promise<
     text: output,
     policy,
     operatorText: [bundle.persona.biography, bundle.persona.customInstructions].filter(Boolean).join('\n'),
-    admittedThread: Boolean(threadPart && job.resolvedContext?.meta.devUpdateAdmission === threadPart.updateId),
+    admittedThread: Boolean(threadPart && (await devUpdatesRepo.getUpdate(threadPart.updateId))?.threadAdmittedAt),
   });
 
   // A post made from the owner's Studio paper record is read once more as

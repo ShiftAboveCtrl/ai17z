@@ -411,7 +411,7 @@ async function reservedThreadParts(scope: 'agent_id' | 'account_id', id: string)
        (SELECT count(*) FROM actions a WHERE a.job_id = j.id AND a.status = 'EXECUTED' AND NOT a.dry_run))), 0)::int AS count
        FROM dev_updates u JOIN jobs j ON j.id = u.job_id
       WHERE j.${scope} = $1 AND NOT j.dry_run AND u.parts IS NOT NULL
-        AND j.resolved_context #>> '{meta,devUpdateAdmission}' = u.id::text
+        AND u.thread_admitted_at IS NOT NULL
         AND j.status NOT IN ('EXECUTED', 'DRY_RUN_COMPLETED', 'PERMANENT_FAILURE', 'CANCELLED')`,
     [id],
   );

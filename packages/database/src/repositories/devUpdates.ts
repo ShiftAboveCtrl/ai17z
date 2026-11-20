@@ -109,6 +109,8 @@ export interface DevUpdateRow {
   status: DevUpdateStatus;
   statusReason: string;
   jobId: string | null;
+  /** Set once, when the thread was admitted against account and agent ceilings. */
+  threadAdmittedAt: string | null;
   remoteUrl: string | null;
   history: DevUpdateHistoryEntry[];
   decidedBy: string | null;
@@ -557,6 +559,23 @@ export async function recordGateDecision(input: {
       [input.id, input.decidedBy, input.approvedText, entry.reason, JSON.stringify([entry])],
     ),
   );
+}
+
+/**
+ * Records that this thread already passed the whole-unit rate check.
+ *
+ * The predicate is the durability: a second call, or a job whose resolved
+ * context was rewritten, cannot admit it again. Returns whether this call
+ * recorded it.
+ */
+export async function admitThread(id: string): Promise<boolean> {
+  const row = await queryOne<{ id: string }>(
+    `UPDATE dev_updates SET thread_admitted_at = now(), updated_at = now()
+      WHERE id = $1 AND parts IS NOT NULL AND thread_admitted_at IS NULL
+      RETURNING id`,
+    [id],
+  );
+  return row !== null;
 }
 
 /** Updates the reason on a row without changing its status, when something is still pending. */

@@ -21,6 +21,7 @@ it('shows every thread part beside the ordinary owner approval controls', () => 
   const html = renderToStaticMarkup(h(JobPage));
   for (const part of parts) expect(html).toContain(part);
   expect(html).toContain('Part 3 of 3');
+  expect(html).toContain(`${Math.max(...parts.map((part) => [...part].length))} characters in the longest part`);
   expect(html).toContain('Approve');
   expect(html).not.toContain('<textarea');
 });

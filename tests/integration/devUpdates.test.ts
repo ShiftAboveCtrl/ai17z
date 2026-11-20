@@ -1160,6 +1160,35 @@ describe('development update threads on mock only', () => {
     await jobs.updateJob(row.jobId, { status: 'CANCELLED' });
     expect(await jobs.countRecentActions(ctx.agentId, 60)).toBe(1);
   });
+  it('keeps an admitted thread admitted after resolved context is rewritten', async () => {
+    const ctx = await threadSetup({ rate: { ...DEFAULT_POLICY.rate, maxActionsPerHour: 3, maxActionsPerDay: 3, minSecondsBetweenActions: 0 } });
+    const { token } = await createProject(ctx, { mode: 'AUTO', rehearse: false });
+    const update = await submitOk(token, facts({ parts }));
+    const execute = mockAdapter.executeAction.bind(mockAdapter);
+    vi.spyOn(mockAdapter, 'executeAction').mockImplementation(async (context, request) => {
+      if (request.text === parts[1]) throw PipelineError.retryable('interrupted', 'Interrupted.');
+      return execute(context, request);
+    });
+    await runDevUpdates(5); await drainAgentJobs(ctx.agentId);
+    const row = await ownerUpdate(ctx, update.id);
+    const [stamp] = await query<{ at: string }>('SELECT thread_admitted_at::text AS at FROM dev_updates WHERE id = $1', [update.id]);
+    expect(stamp?.at).toBeTruthy();
+    const job = await jobs.getJob(row.jobId);
+    const meta = { ...(job!.resolvedContext?.meta ?? {}) } as Record<string, unknown>;
+    meta.devUpdateAdmission = 'rewritten';
+    await jobs.updateJob(row.jobId, { resolvedContext: { ...job!.resolvedContext!, meta } });
+    expect(await jobs.countRecentActions(ctx.agentId, 60)).toBe(3);
+    vi.mocked(mockAdapter.executeAction).mockImplementation(execute);
+    mockAdapter.wasAlreadyDone = async () => ({ done: false, conclusive: true, remoteActionId: null, remoteActionUrl: null, detail: 'Absent.' });
+    try {
+      await makeDue(row.jobId); await settle(ctx);
+      const resumed = await ownerUpdate(ctx, update.id);
+      expect(resumed.status, resumed.reason).toBe('PUBLISHED');
+      const [again] = await query<{ at: string }>('SELECT thread_admitted_at::text AS at FROM dev_updates WHERE id = $1', [update.id]);
+      expect(again?.at).toBe(stamp!.at);
+      expect((await actions.listJobActions(row.jobId)).filter((a) => a.status === 'EXECUTED')).toHaveLength(3);
+    } finally { delete mockAdapter.wasAlreadyDone; }
+  });
   it('publishes one original followed by replies to the previous published id', async () => {
     const ctx = await threadSetup();
     const { token } = await createProject(ctx, { mode: 'AUTO', rehearse: false });

@@ -79,8 +79,12 @@ later parts reply to the previous part's confirmed status id. Every part uses
 the ordinary executor with a key derived from the update id and zero-based part
 index. The head uses the ordinary account POST content signature. Safety and
 policy check the complete thread before any send, then repeat at each send.
-Admission checks account cadence and agent rate limits for every part together;
-unfinished parts reserve capacity across retries. Continuations do not recheck
+Admission checks account cadence and agent rate limits for every part together
+and records that fact on the update (`thread_admitted_at`, migration 0144).
+A recovery that rewrites the job context cannot admit the thread again.
+Unfinished parts reserve capacity across retries. Parts this job already
+executed stay in the ordinary action count and are left out of that reservation.
+Continuations do not recheck
 cooldowns or project spacing. Pause, health and permission gates still apply.
 A failure stops publishing and records every confirmed part with its link;
 recovery skips durable
