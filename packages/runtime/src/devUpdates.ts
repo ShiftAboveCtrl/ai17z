@@ -132,6 +132,7 @@ export type DevUpdateProjectPatch = z.infer<typeof DevUpdateProjectPatch>;
 export const DevUpdateDecisionInput = z
   .object({
     editedText: z.string().trim().min(1).max(400).optional(),
+    editedParts: z.array(z.string().trim().min(1).max(560)).min(2).max(6).optional(),
     note: z.string().trim().max(500).optional(),
   })
   .strict();
@@ -182,6 +183,7 @@ export function updateView(row: DevUpdateRow) {
     why: row.why,
     evidence: row.evidence,
     post: row.approvedText ?? row.postText,
+    ...(row.parts ? { parts: row.approvedParts ?? row.parts, proposedParts: row.parts } : {}),
     // What goes out with it, for the owner to look at before approving. The
     // address is the artifact route, which needs the owner's own session.
     media: (row.media ?? []).map((m) => ({
@@ -192,7 +194,7 @@ export function updateView(row: DevUpdateRow) {
       url: `/api/artifacts/${m.artifactId}`,
     })),
     proposedPost: row.postText,
-    edited: row.approvedText !== null && row.approvedText !== row.postText,
+    edited: (row.approvedText !== null && row.approvedText !== row.postText) || Boolean(row.approvedParts),
     status: row.status,
     reason: row.statusReason,
     url: row.remoteUrl,
@@ -451,6 +453,16 @@ function checkAgainst(
   return { output: validation.output, refusals, reviews };
 }
 
+function checkPartsAgainst(rules: PublishRules, parts: string[]) {
+  const checked = parts.map((part) => checkAgainst(rules, part));
+  const output = checked.map((part) => part.output);
+  const refusals = checked.flatMap((part, index) => part.refusals.map((r) => ({ ...r, field: parts.length > 1 ? `parts.${index}` : r.field })));
+  if (new Set(output.map(textFingerprint)).size !== output.length) {
+    refusals.push({ code: 'NOT_MEANINGFUL', field: 'parts', message: 'Each part must say something different.' });
+  }
+  return { output: output[0]!, parts: output, refusals, reviews: checked.flatMap((part) => part.reviews) };
+}
+
 /** Files a sender has uploaded and not yet attached to an update. More than this is a leak. */
 const MAX_UNATTACHED_MEDIA = 8;
 /** An uploaded file nobody attached is removed after this long. */
@@ -511,12 +523,14 @@ export async function submitDevUpdate(project: DevUpdateProjectRow, raw: unknown
   // Only compose once the facts are known to be safe, so a refused secret is
   // never assembled into anything.
   let postText = '';
+  let parts: string[] | undefined;
   let reviews: string[] = [];
   if (refusals.length === 0) {
     const proposed = input.post ?? composePost(input, project.displayName, fact);
-    const checked = await checkPublishable(project.agentId, proposed);
+    const checked = checkPartsAgainst(await publishRules(project.agentId), input.parts ?? [proposed]);
     refusals.push(...checked.refusals);
     postText = checked.output;
+    if (checked.parts.length > 1) parts = checked.parts;
     reviews = checked.reviews;
   }
   if (refusals.length > 0) {
@@ -608,6 +622,7 @@ export async function submitDevUpdate(project: DevUpdateProjectRow, raw: unknown
       why: input.why,
       evidence: input.evidence.map((e) => ({ type: e.type, ref: e.ref ?? null, detail: e.detail })),
       postText,
+      parts,
       factFingerprint: fact,
       textFingerprint: textFingerprint(postText),
       evidenceKeys: keys,
@@ -703,7 +718,13 @@ export async function approveDevUpdate(ownerId: string, updateId: string, raw: u
   const input = DevUpdateDecisionInput.parse(raw ?? {});
   const { row, project } = await ownedUpdate(ownerId, updateId);
 
+  if (row.parts && input.editedText) throw new ValidationError('Edit the complete thread with editedParts.');
+  if (input.editedParts && (!row.parts || input.editedParts.length !== row.parts.length)) {
+    throw new ValidationError('Keep the same number of thread parts when approving.');
+  }
+
   if (row.status === 'DISPATCHED' && row.jobId) {
+    if (input.editedParts) throw new ConflictError('Thread text is fixed after dispatch. Approve the complete thread or reject it.');
     // Already in the pipeline and held at the agent's own approval gate. This
     // is the same approval the review queue makes, through the same function.
     const job = await jobsRepo.getJob(row.jobId);
@@ -733,7 +754,7 @@ export async function approveDevUpdate(ownerId: string, updateId: string, raw: u
     throw new ConflictError(`This update is ${row.status.toLowerCase().replace(/_/g, ' ')}, so there is nothing to approve.`);
   }
   const text = input.editedText ?? row.postText;
-  const checked = await checkPublishable(project.agentId, text);
+  const checked = checkPartsAgainst(await publishRules(project.agentId), input.editedParts ?? row.approvedParts ?? row.parts ?? [text]);
   if (checked.refusals.length) throw new DevUpdateRefusedError(checked.refusals);
 
   const next = await repo.transition({
@@ -741,10 +762,11 @@ export async function approveDevUpdate(ownerId: string, updateId: string, raw: u
     from: ['PENDING_REVIEW'],
     to: 'APPROVED',
     actor: 'owner',
-    reason: input.editedText
+    reason: input.editedText || input.editedParts
       ? 'Approved with edits. Waiting for the next posting slot.'
       : 'Approved. Waiting for the next posting slot.',
     approvedText: checked.output !== row.postText ? checked.output : null,
+    ...(row.parts ? { approvedParts: checked.parts.some((part, index) => part !== row.parts![index]) ? checked.parts : null } : {}),
     decidedBy: ownerId,
   });
   if (!next) throw new ConflictError('This update was decided by somebody else a moment ago.');
@@ -753,7 +775,7 @@ export async function approveDevUpdate(ownerId: string, updateId: string, raw: u
     action: 'dev_updates.approved',
     entityType: 'dev_update',
     entityId: row.id,
-    data: { edited: Boolean(input.editedText) },
+    data: { edited: Boolean(input.editedText || input.editedParts) },
   });
   return updateView(next);
 }
@@ -953,7 +975,7 @@ async function dispatchProject(projectId: string): Promise<DispatchResult | null
 
     // Safety at the moment of sending, against the rules as they are now.
     const text = update.approvedText ?? update.postText;
-    const checked = checkAgainst(rules, text);
+    const checked = checkPartsAgainst(rules, update.approvedParts ?? update.parts ?? [text]);
     if (checked.refusals.length > 0 || !checked.output) {
       const reason = `Stopped before posting: ${checked.refusals.map((r) => r.message).join(' ') || 'there was no text.'}`;
       await repo.transition({ id: update.id, from: ['APPROVED'], to: 'FAILED', actor: 'system', reason, finished: true }, tx);
@@ -1113,12 +1135,27 @@ export async function reconcileOne(row: DevUpdateRow): Promise<DevUpdateRow> {
   const job = await jobsRepo.getJob(row.jobId);
   if (!job) return row;
 
+  const published = row.parts ? (await actionsRepo.listJobActions(job.id)).filter((a) => a.status === 'EXECUTED' && !a.dryRun) : [];
+  const publicParts = row.parts?.flatMap((_, i) => {
+    const part = published.find((a) => a.idempotencyKey === `devupdate:${row.id}:part:${i}`);
+    return part ? [`Part ${i + 1} published: ${part.remoteActionUrl ?? 'link unavailable'}.`] : [];
+  }) ?? [];
+  const headUrl = published.find((a) => a.idempotencyKey === `devupdate:${row.id}:part:0`)?.remoteActionUrl ?? null;
+  const progress = publicParts.length ? ` ${publicParts.join(' ')} ${publicParts.length < row.parts!.length ? `Part ${publicParts.length + 1} and any later parts are not confirmed as published.` : ''}` : '';
+  const withProgress = (reason: string) => progress ? `${progress.trim()} ${reason}` : reason;
+
   const settle = async (to: DevUpdateStatus, reason: string, extra: { remoteUrl?: string | null; scrub?: boolean; approvedText?: string | null } = {}) =>
-    (await repo.transition({ id: row.id, from: ['DISPATCHED'], to, actor: 'system', reason, finished: true, ...extra })) ?? row;
+    (await repo.transition({ id: row.id, from: ['DISPATCHED'], to, actor: 'system',
+      reason: to === 'PUBLISHED' ? reason : withProgress(reason), finished: true,
+      ...(headUrl ? { remoteUrl: headUrl } : {}), ...extra })) ?? row;
 
   switch (job.status) {
     case 'EXECUTED': {
-      const sent = (await actionsRepo.listJobActions(job.id)).find((a) => a.status === 'EXECUTED' && !a.dryRun);
+      const executed = (await actionsRepo.listJobActions(job.id)).filter((a) => a.status === 'EXECUTED' && !a.dryRun);
+      const sent = executed.find((a) => a.type === 'POST');
+      if (row.parts && executed.length !== row.parts.length) {
+        return settle('FAILED', 'The complete thread was not confirmed as published. Check the published parts before taking further action.');
+      }
       if (sent) {
         // What went out, whichever review path last touched it.
         const text = typeof sent.payload.text === 'string' ? sent.payload.text : null;
@@ -1145,16 +1182,17 @@ export async function reconcileOne(row: DevUpdateRow): Promise<DevUpdateRow> {
       return settle('CANCELLED', `Stopped before posting: ${job.lastError ?? 'cancelled.'}`);
     }
     case 'WAITING_FOR_APPROVAL':
-      await repo.noteReason(row.id, 'DISPATCHED', "Waiting at the agent's approval gate. Approve or reject it to continue.");
+      await repo.noteReason(row.id, 'DISPATCHED', withProgress("Waiting at the agent's approval gate. Approve or reject it to continue."), headUrl);
       break;
     case 'REVIEW_REQUIRED':
-      await repo.noteReason(row.id, 'DISPATCHED', `Needs the owner: ${job.lastError ?? 'the pipeline asked for a person.'}`);
+      await repo.noteReason(row.id, 'DISPATCHED', withProgress(`Needs the owner: ${job.lastError ?? 'the pipeline asked for a person.'}`), headUrl);
       break;
     default:
       await repo.noteReason(
         row.id,
         'DISPATCHED',
-        `In the agent's queue (${job.status.toLowerCase().replace(/_/g, ' ')})${job.lastError ? `: ${job.lastError}` : '.'}`,
+        withProgress(`In the agent's queue (${job.status.toLowerCase().replace(/_/g, ' ')})${job.lastError ? `: ${job.lastError}` : '.'}`),
+        headUrl,
       );
   }
   return (await repo.getUpdate(row.id)) ?? row;

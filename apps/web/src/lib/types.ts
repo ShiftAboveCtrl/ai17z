@@ -147,6 +147,7 @@ export interface DiagnosticRow {
 }
 
 export interface JobDetail {
+  threadParts?: string[] | null;
   job: JobRecord;
   event: {
     id: string;

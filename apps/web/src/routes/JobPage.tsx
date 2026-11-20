@@ -121,8 +121,13 @@ export function JobPage() {
 
       {output && (
         <section className="mt-10">
-          <p className="eyebrow mb-3">Generated reply</p>
-          {decidable ? (
+          <p className="eyebrow mb-3">{data.threadParts ? 'The complete thread' : 'Generated reply'}</p>
+          {data.threadParts ? <ol className="space-y-4" aria-label="Thread parts in publishing order">
+            {data.threadParts.map((part, i) => <li key={i}>
+              <p className="eyebrow mb-2">Part {i + 1} of {data.threadParts!.length}</p>
+              <p className="whitespace-pre-wrap break-words rounded-xl border border-ink-line bg-ink-raised px-5 py-4 text-[15px] leading-relaxed text-bone">{part}</p>
+            </li>)}
+          </ol> : decidable ? (
             <textarea
               className="field min-h-[7rem] resize-y text-base leading-relaxed"
               value={output}
@@ -134,7 +139,10 @@ export function JobPage() {
               {output}
             </p>
           )}
-          <p className="mt-2 font-mono text-[10px] text-bone-faint">{output.length} characters</p>
+          <p className="mt-2 font-mono text-[10px] text-bone-faint">{data.threadParts
+            ? `${Math.max(...data.threadParts.map((part) => [...part].length))} characters in the longest part`
+            : `${output.length} characters`}</p>
+          {data.threadParts && <Link to="/dev-updates" className="btn-quiet mt-2">Edit the complete thread in Development updates</Link>}
 
           {decidable && (
             <div className="mt-4 flex flex-wrap gap-2">

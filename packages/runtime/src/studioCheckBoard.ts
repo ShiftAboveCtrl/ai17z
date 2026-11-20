@@ -51,10 +51,13 @@ export const MOST_CHECKED_IDEA_SOURCE = 'studio_most_checked';
 // ---------------------------------------------------------------------------
 
 /** The agents whose owners opted in to contributing. Read from the live policy, never cached. */
-async function contributingAgentIds(): Promise<string[]> {
+async function contributingAgentIds(now: Date): Promise<string[]> {
+  // Measured against the sweep's own clock, never the database's: the buckets are cut from
+  // `now`, so a window on now() disagreed with them whenever the two clocks did.
   const rows = await query<{ agent_id: string }>(
-    `SELECT DISTINCT agent_id FROM evidence_card_requests WHERE NOT dry_run AND created_at > now() - ($1::int * interval '1 hour')`,
-    [CHECK_BOARD_WINDOW_HOURS * 2],
+    `SELECT DISTINCT agent_id FROM evidence_card_requests
+      WHERE NOT dry_run AND created_at > $2::timestamptz - ($1::int * interval '1 hour')`,
+    [CHECK_BOARD_WINDOW_HOURS * 2, now.toISOString()],
   );
   const ids: string[] = [];
   for (const { agent_id } of rows) {
@@ -126,7 +129,7 @@ export type ContributeResult = { sent: number; skipped?: string };
 
 /** Worker sweep. Rides the existing loop; a persisted claim bounds concurrent workers and retries. */
 export async function sweepCheckContributions(now: Date = new Date()): Promise<ContributeResult> {
-  const agents = await contributingAgentIds();
+  const agents = await contributingAgentIds(now);
   if (agents.length === 0) return { sent: 0, skipped: 'off' };
   const claimed = await query(
     `INSERT INTO app_settings (key, value) VALUES ('studio.check_board.attempt', to_jsonb(now()))
@@ -137,7 +140,7 @@ export async function sweepCheckContributions(now: Date = new Date()): Promise<C
   const batchRows = (await unsent(await closedBuckets(agents, now))).slice(0, CHECK_BOARD_MAX_CONTRIBUTIONS);
   if (batchRows.length === 0) return { sent: 0, skipped: 'empty' };
   // Consent is read again immediately before sending: an owner who just switched it off is obeyed.
-  const stillOn = await contributingAgentIds();
+  const stillOn = await contributingAgentIds(now);
   if (stillOn.length !== agents.length || stillOn.some((id) => !agents.includes(id))) return { sent: 0, skipped: 'changed' };
   const batch = CheckContributionBatch.parse({ protocol: 1, contributions: batchRows });
   const answer = await studioInstallationRequest(CONTRIBUTE_ROUTE, { method: 'POST', json: batch }).catch(

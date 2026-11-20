@@ -30,7 +30,7 @@ import { readMediaInventory } from './media';
 import { readPage, webSearch } from './websearch';
 import { screenshotPublicPage } from '../postScreenshot';
 import { type ArticleSnapshot, parentTextOf, resolveBranch } from './conversation';
-import { buildStatusUrl, extractStatusId, looksUnavailable, normalizeHandle, normalizeTargetId } from './targets';
+import { buildStatusUrl, extractStatusId, looksUnavailable, normalizeHandle, normalizeTargetId, verifyAnchoredAction } from './targets';
 import {
   MAX_ARTICLES_READ,
   MAX_SCROLL_PASSES,
@@ -617,34 +617,14 @@ export const xAdapter: ChannelAdapter = {
       }
 
       const snapshot = await readArticle(page, anchor);
-      if (snapshot.statusId !== statusId) {
-        return {
-          verified: false,
-          detail: `Anchored article reports status ${snapshot.statusId ?? 'unknown'}, expected ${statusId}.`,
-          targetRef,
-          targetUrl: url,
-          targetAuthorHandle: snapshot.authorHandle,
-          evidence: { anchoredStatusId: snapshot.statusId },
-        };
-      }
-      if (snapshot.authorHandle && selfHandles(ctx).includes(snapshot.authorHandle)) {
-        return {
-          verified: false,
-          detail: `The target post belongs to this account (@${snapshot.authorHandle}). Refusing to self-reply.`,
-          targetRef,
-          targetUrl: url,
-          targetAuthorHandle: snapshot.authorHandle,
-          evidence: { selfReply: true },
-        };
-      }
-
+      const decision = verifyAnchoredAction({ request, statusId, selfHandles: selfHandles(ctx), snapshot });
       return {
-        verified: true,
-        detail: `Anchored to status ${statusId} by @${snapshot.authorHandle ?? 'unknown'}.`,
+        verified: decision.verified,
+        detail: decision.detail,
         targetRef,
         targetUrl: url,
-        targetAuthorHandle: snapshot.authorHandle,
-        evidence: { statusId, author: snapshot.authorHandle, textPreview: snapshot.text.slice(0, 200) },
+        targetAuthorHandle: decision.authorHandle,
+        evidence: decision.evidence,
       };
     });
   },

@@ -48,6 +48,7 @@ const INSTRUCTIONS = [
   'give the path of each file on this machine. The file is read here and uploaded to the owner\'s AI17Z, and the path itself is never sent.',
   'Attach only what may be public: nothing with a name, a token, an address, a private window or an unreleased screen in it.',
   'The owner sees the attachment next to the post before it goes out.',
+  'For a detailed update, provide parts instead of post: one to six sections, each at most 280 Unicode code points. The whole thread is reviewed together.',
   'The owner reviews updates unless they chose auto mode, and posting is capped and spaced, so one good update beats several small ones.',
 ].join(' ');
 
@@ -117,6 +118,11 @@ export const TOOLS = [
         publicConfirmed: {
           type: 'boolean',
           description: 'True only if every fact in this update may be published. Anything else is refused.',
+        },
+        parts: {
+          type: 'array', minItems: 1, maxItems: 6,
+          description: 'Optional thread in publishing order. Use instead of post. Each section must be at most 280 Unicode code points and safe to publish. The owner approves the complete thread.',
+          items: { type: 'string', minLength: 1, maxLength: 280 },
         },
       },
     },
@@ -269,6 +275,7 @@ export function createServer(options = {}) {
         evidence: Array.isArray(args.evidence) ? args.evidence : [],
         disclosure: 'PUBLIC',
         ...(typeof args.post === 'string' && args.post.trim() ? { post: args.post } : {}),
+        ...(Array.isArray(args.parts) ? { parts: args.parts } : {}),
         ...(mediaIds.length > 0 ? { mediaIds } : {}),
         clientRequestId: requestIdFor(args),
       };
@@ -290,6 +297,7 @@ export function createServer(options = {}) {
         status: update.status,
         reason: update.reason,
         post: update.post,
+        ...(update.parts ? { parts: update.parts } : {}),
         ...(update.media?.length ? { attachments: update.media.map((m) => ({ kind: m.kind, bytes: m.bytes })) } : {}),
       });
     }
@@ -299,7 +307,8 @@ export function createServer(options = {}) {
       const result = await api('GET', `/api/dev-updates/sender/updates/${encodeURIComponent(args.id)}`);
       if (!result.ok) return toolResult(result.message, true);
       const u = result.data;
-      return toolResult({ id: u.id, title: u.title, status: u.status, reason: u.reason, waitingBecause: u.waitingBecause, url: u.url, post: u.post });
+      return toolResult({ id: u.id, title: u.title, status: u.status, reason: u.reason, waitingBecause: u.waitingBecause, url: u.url, post: u.post,
+        ...(u.parts ? { parts: u.parts } : {}) });
     }
 
     if (name === 'list_dev_updates') {
@@ -307,7 +316,8 @@ export function createServer(options = {}) {
       const result = await api('GET', `/api/dev-updates/sender/updates?limit=${limit}`);
       if (!result.ok) return toolResult(result.message, true);
       return toolResult({
-        items: result.data.items.map((u) => ({ id: u.id, kind: u.kind, title: u.title, status: u.status, reason: u.reason, url: u.url, createdAt: u.createdAt })),
+        items: result.data.items.map((u) => ({ id: u.id, kind: u.kind, title: u.title, status: u.status, reason: u.reason, url: u.url, createdAt: u.createdAt,
+          ...(u.parts ? { parts: u.parts } : {}) })),
       });
     }
 

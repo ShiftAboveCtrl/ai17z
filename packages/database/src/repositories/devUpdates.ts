@@ -31,6 +31,10 @@ export const DEV_UPDATE_STATUSES = [
 ] as const;
 export type DevUpdateStatus = (typeof DEV_UPDATE_STATUSES)[number];
 
+export async function updateForJob(jobId: string): Promise<DevUpdateRow | null> {
+  return mapRow<DevUpdateRow>(await queryOne('SELECT * FROM dev_updates WHERE job_id = $1', [jobId]));
+}
+
 /** Statuses that are over: nothing will happen to the update again. */
 export const DEV_UPDATE_FINAL_STATUSES: readonly DevUpdateStatus[] = [
   'PUBLISHED',
@@ -93,6 +97,8 @@ export interface DevUpdateRow {
   why: string;
   evidence: DevUpdateEvidence[];
   postText: string;
+  parts?: string[] | null;
+  approvedParts?: string[] | null;
   approvedText: string | null;
   factFingerprint: string;
   textFingerprint: string;
@@ -103,6 +109,8 @@ export interface DevUpdateRow {
   status: DevUpdateStatus;
   statusReason: string;
   jobId: string | null;
+  /** Set once, when the thread was admitted against account and agent ceilings. */
+  threadAdmittedAt: string | null;
   remoteUrl: string | null;
   history: DevUpdateHistoryEntry[];
   decidedBy: string | null;
@@ -348,6 +356,7 @@ export async function insertUpdate(
     why: string;
     evidence: DevUpdateEvidence[];
     postText: string;
+    parts?: string[];
     factFingerprint: string;
     textFingerprint: string;
     evidenceKeys: string[];
@@ -361,8 +370,8 @@ export async function insertUpdate(
   const row = await tx.one(
     `INSERT INTO dev_updates
        (project_id, kind, title, summary, why, evidence, post_text, fact_fingerprint, text_fingerprint,
-        evidence_keys, client_request_id, status, status_reason, history, media)
-     VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10::text[],$11,$12,$13,$14::jsonb,$15::jsonb)
+        evidence_keys, client_request_id, status, status_reason, history, media, parts)
+     VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10::text[],$11,$12,$13,$14::jsonb,$15::jsonb,$16::jsonb)
      RETURNING *`,
     [
       input.projectId,
@@ -380,6 +389,7 @@ export async function insertUpdate(
       input.statusReason,
       JSON.stringify(input.history),
       JSON.stringify(input.media ?? []),
+      input.parts ? JSON.stringify(input.parts) : null,
     ],
   );
   return mapRow<DevUpdateRow>(row) as DevUpdateRow;
@@ -485,6 +495,7 @@ export async function transition(
     reason: string;
     actor: DevUpdateHistoryEntry['actor'];
     approvedText?: string | null;
+    approvedParts?: string[] | null;
     decidedBy?: string | null;
     jobId?: string | null;
     remoteUrl?: string | null;
@@ -499,7 +510,7 @@ export async function transition(
     at: new Date().toISOString(),
     status: input.to,
     actor: input.actor,
-    reason: input.reason.slice(0, 500),
+    reason: input.reason.slice(0, 2_000),
   };
   const params: unknown[] = [input.id, [...input.from], input.to, entry.reason, JSON.stringify([entry])];
   const sets = ['status = $3', 'status_reason = $4', 'history = history || $5::jsonb', 'updated_at = now()'];
@@ -508,6 +519,7 @@ export async function transition(
     sets.push(fragment.replace('$?', `$${params.length}`));
   };
   if (input.approvedText !== undefined) push('approved_text = $?', input.approvedText);
+  if (input.approvedParts !== undefined) push('approved_parts = $?::jsonb', input.approvedParts ? JSON.stringify(input.approvedParts) : null);
   if (input.decidedBy !== undefined) {
     push('decided_by = $?', input.decidedBy);
     sets.push('decided_at = now()');
@@ -517,7 +529,7 @@ export async function transition(
   if (input.dispatched) sets.push('dispatched_at = now()');
   if (input.finished) sets.push('finished_at = now()');
   if (input.scrub) {
-    sets.push(`title = '', summary = '', why = '', evidence = '[]'::jsonb, post_text = '', approved_text = NULL, media = '[]'::jsonb`);
+    sets.push(`title = '', summary = '', why = '', evidence = '[]'::jsonb, post_text = '', approved_text = NULL, media = '[]'::jsonb, parts = NULL, approved_parts = NULL`);
   }
   const sql = `UPDATE dev_updates SET ${sets.join(', ')} WHERE id = $1 AND status = ANY($2::text[]) RETURNING *`;
   const row = tx ? await tx.one(sql, params) : await queryOne(sql, params);
@@ -549,12 +561,29 @@ export async function recordGateDecision(input: {
   );
 }
 
+/**
+ * Records that this thread already passed the whole-unit rate check.
+ *
+ * The predicate is the durability: a second call, or a job whose resolved
+ * context was rewritten, cannot admit it again. Returns whether this call
+ * recorded it.
+ */
+export async function admitThread(id: string): Promise<boolean> {
+  const row = await queryOne<{ id: string }>(
+    `UPDATE dev_updates SET thread_admitted_at = now(), updated_at = now()
+      WHERE id = $1 AND parts IS NOT NULL AND thread_admitted_at IS NULL
+      RETURNING id`,
+    [id],
+  );
+  return row !== null;
+}
+
 /** Updates the reason on a row without changing its status, when something is still pending. */
-export async function noteReason(id: string, status: DevUpdateStatus, reason: string): Promise<void> {
+export async function noteReason(id: string, status: DevUpdateStatus, reason: string, remoteUrl?: string | null): Promise<void> {
   await query(
-    `UPDATE dev_updates SET status_reason = $3, updated_at = now()
-      WHERE id = $1 AND status = $2 AND status_reason IS DISTINCT FROM $3`,
-    [id, status, reason.slice(0, 500)],
+    `UPDATE dev_updates SET status_reason = $3, remote_url = coalesce($4, remote_url), updated_at = now()
+      WHERE id = $1 AND status = $2 AND (status_reason IS DISTINCT FROM $3 OR ($4::text IS NOT NULL AND remote_url IS DISTINCT FROM $4))`,
+    [id, status, reason.slice(0, 2_000), remoteUrl ?? null],
   );
 }
 
@@ -595,7 +624,7 @@ export async function countInFlight(tx: Tx, projectId: string): Promise<number> 
  */
 export async function sentWindow(projectId: string, excludeJobId: string | null = null): Promise<{ lastDay: number; lastSentAt: string | null; oldestInDayAt: string | null }> {
   const row = await queryOne<{ last_day: number; last_at: Date | null; oldest_at: Date | null }>(
-    `SELECT count(*) FILTER (WHERE a.executed_at > now() - interval '24 hours')::int AS last_day,
+    `SELECT count(DISTINCT u.id) FILTER (WHERE a.executed_at > now() - interval '24 hours')::int AS last_day,
             max(a.executed_at) AS last_at,
             min(a.executed_at) FILTER (WHERE a.executed_at > now() - interval '24 hours') AS oldest_at
        FROM dev_updates u

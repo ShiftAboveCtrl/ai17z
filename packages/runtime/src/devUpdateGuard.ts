@@ -39,6 +39,7 @@ export async function checkDevUpdateAtSend(input: {
   text: string;
   policy: PolicyConfig;
   operatorText: string;
+  admittedThread?: boolean;
 }): Promise<void> {
   const raw = (input.raw ?? {}) as { origin?: unknown; devUpdateId?: unknown };
   if (raw.origin !== 'dev_update' || typeof raw.devUpdateId !== 'string') return;
@@ -57,6 +58,20 @@ export async function checkDevUpdateAtSend(input: {
   const project = update ? await repo.getProject(update.projectId) : null;
   if (!update || !project) {
     throw PipelineError.permanent('dev_update_missing', 'The development update or its project was removed before sending.');
+  }
+  // One unsafe section blocks the entire approval unit, including sections
+  // that would otherwise be sent before it. The executor repeats this for each send.
+  if (update.parts) {
+    const parts = update.approvedParts ?? update.parts;
+    const problems = parts.flatMap((part) => {
+      const checked = validateOutput(part, input.policy, null, input.operatorText);
+      return [...checkPostText(part).map((r) => r.message),
+        ...checked.violations.filter((v) => v.severity === 'REJECT').map((v) => v.message),
+        ...(checked.output !== part ? ['A thread section needs a fresh review after a policy repair.'] : [])];
+    });
+    if (problems.length) throw PipelineError.permanent('dev_update_unsafe', `This thread was stopped before sending: ${problems.join(' ')}`);
+    const partIndex = (input.raw as { devUpdatePart?: number }).devUpdatePart ?? 0;
+    if (input.text !== parts[partIndex]) throw PipelineError.permanent('dev_update_thread_changed', 'The thread no longer matches the complete text approved by the owner.');
   }
   if (update.status !== 'DISPATCHED') {
     throw PipelineError.permanent(
@@ -87,7 +102,8 @@ export async function checkDevUpdateAtSend(input: {
   const gate = await actionsRepo.getApproval(input.jobId);
   const ownerDecided = update.decidedBy !== null || gate?.status === 'APPROVED';
   if (!ownerDecided) {
-    const reviews = validation.violations.filter((v) => v.severity === 'REVIEW').map((v) => v.message);
+    const reviews = (update.approvedParts ?? update.parts ?? [input.text]).flatMap((part) =>
+      validateOutput(part, input.policy, null, input.operatorText).violations.filter((v) => v.severity === 'REVIEW').map((v) => v.message));
     if (reviews.length > 0) {
       throw PipelineError.review('dev_update_needs_owner', `This development update needs the owner: ${reviews.join(' ')}`);
     }
@@ -101,6 +117,7 @@ export async function checkDevUpdateAtSend(input: {
 
   // The ceiling and the spacing, on what was really sent. A limit that has not
   // cleared is a wait, not a failure: retryAfterMs charges no attempt.
+  if (update.parts && input.admittedThread) return;
   const sent = await repo.sentWindow(project.id, input.jobId);
   const now = Date.now();
   if (sent.lastDay >= project.dailyCap) {

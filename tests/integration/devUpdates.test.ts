@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_POLICY, type PolicyConfig } from '@xbam/shared/contracts';
 import { PipelineError } from '@xbam/shared';
-import { accountLease, accounts, actions, agents, capabilities, jobs, query } from '@xbam/database';
+import { accountLease, accounts, actions, agents, cadences, capabilities, jobs, query } from '@xbam/database';
 import { mockAdapter } from '@xbam/channels';
 import { approveJob, devUpdateConnection, dispatchDevUpdates, reconcileDevUpdates, runDevUpdates } from '@xbam/runtime';
 import { buildServer } from '../../apps/api/src/server';
@@ -1019,5 +1019,279 @@ describe('recovering an attempt whose text was edited afterwards', () => {
     } finally {
       delete adapter.wasAlreadyDone;
     }
+  });
+});
+
+describe('development update threads on mock only', () => {
+  async function threadSetup(policy?: Partial<PolicyConfig>) {
+    const ctx = await setup({ policy });
+    await capabilities.grant(ctx.agentId, ctx.accountId, 'REPLY');
+    return ctx;
+  }
+  const parts = [
+    'Thread updates now explain what shipped with enough detail for readers to follow the change.',
+    'Each later section replies to the previous published section so the explanation stays in order.',
+    'Interrupted publishing resumes from the first unfinished section without repeating earlier updates.',
+  ];
+  it('passes only the previous confirmed DB id as continuation authority', async () => {
+    const ctx = await threadSetup();
+    const { token } = await createProject(ctx, { mode: 'AUTO', rehearse: false });
+    const update = await submitOk(token, facts({ parts }));
+    const execute = mockAdapter.executeAction.bind(mockAdapter);
+    vi.spyOn(mockAdapter, 'executeAction').mockImplementation(async (context, request) => {
+      const sent = (await actions.listJobActions(context.jobId!)).filter((a) => a.status === 'EXECUTED');
+      expect(request.threadContinuation?.previousPartStatusId ?? null).toBe(sent.at(-1)?.remoteActionId ?? null);
+      if (request.type === 'REPLY') expect(request.threadContinuation).toBeDefined();
+      return execute(context, request);
+    });
+    await runDevUpdates(5); await settle(ctx);
+    expect((await ownerUpdate(ctx, update.id)).status).toBe('PUBLISHED');
+  });
+  it.each(['agent', 'account'] as const)('admits all parts once under %s cooldown and ceilings', async (scope) => {
+    const ctx = await threadSetup(scope === 'agent' ? { rate: { ...DEFAULT_POLICY.rate, maxActionsPerHour: 3, maxActionsPerDay: 3, minSecondsBetweenActions: 600 } } : undefined);
+    if (scope === 'account') {
+      const config = await cadences.activeCadence(ctx.accountId);
+      await cadences.saveVersion(ctx.accountId, { ...config, acting: { ...config.acting, maxActionsPerHour: 3, maxActionsPerDay: 3, minSecondsBetweenActions: 600 } }, 'Thread capacity', ctx.ownerId);
+    }
+    const { token } = await createProject(ctx, { mode: 'AUTO', rehearse: false });
+    const update = await submitOk(token, facts({ parts }));
+    await runDevUpdates(5); await settle(ctx);
+    expect((await ownerUpdate(ctx, update.id)).status).toBe('PUBLISHED');
+    expect(await jobs.countRecentActions(ctx.agentId, 60)).toBe(3);
+  });
+  it.each(['agent', 'account'] as const)('sends nothing when the complete thread exceeds the %s ceiling', async (scope) => {
+    const ctx = await threadSetup(scope === 'agent' ? { rate: { ...DEFAULT_POLICY.rate, maxActionsPerHour: 2, maxActionsPerDay: 2, minSecondsBetweenActions: 0 } } : undefined);
+    if (scope === 'account') {
+      const config = await cadences.activeCadence(ctx.accountId);
+      await cadences.saveVersion(ctx.accountId, { ...config, acting: { ...config.acting, maxActionsPerHour: 2, maxActionsPerDay: 2 } }, 'Thread capacity', ctx.ownerId);
+    }
+    const { token } = await createProject(ctx, { mode: 'AUTO', rehearse: false });
+    const update = await submitOk(token, facts({ parts }));
+    await runDevUpdates(5); await settle(ctx);
+    const row = await ownerUpdate(ctx, update.id);
+    expect((await actions.listJobActions(row.jobId)).filter((a) => a.status === 'EXECUTED')).toHaveLength(0);
+  });
+  it.each(['PERMANENT_FAILURE', 'CANCELLED', 'EXECUTED', 'REVIEW_REQUIRED'] as const)('reports links to every public part when a thread becomes %s', async (status) => {
+    const ctx = await threadSetup();
+    const { token } = await createProject(ctx, { mode: 'AUTO', rehearse: false });
+    const update = await submitOk(token, facts({ parts }));
+    const execute = mockAdapter.executeAction.bind(mockAdapter);
+    vi.spyOn(mockAdapter, 'executeAction').mockImplementation(async (context, request) => {
+      if (request.text === parts[2]) throw PipelineError.permanent('stopped', 'The remaining section was stopped.');
+      return execute(context, request);
+    });
+    await runDevUpdates(5); await settle(ctx);
+    const stopped = await ownerUpdate(ctx, update.id);
+    await query("UPDATE dev_updates SET status = 'DISPATCHED' WHERE id = $1", [update.id]);
+    await jobs.updateJob(stopped.jobId, { status, lastError: 'The remaining section was stopped. '.repeat(100) });
+    await reconcileDevUpdates(5);
+    const row = await ownerUpdate(ctx, update.id);
+    const published = (await actions.listJobActions(stopped.jobId)).filter((a) => a.status === 'EXECUTED');
+    expect(published).toHaveLength(2);
+    expect(row.url).toBe(published[0]!.remoteActionUrl);
+    expect(row.reason).toContain('Part 1'); expect(row.reason).toContain('Part 2');
+    for (const part of published) expect(row.reason).toContain(part.remoteActionUrl);
+    expect(row.reason).toMatch(/part 3/i);
+  });
+  it('shows every part at the ordinary owner approval gate', async () => {
+    const ctx = await threadSetup({ automation: { ...DEFAULT_POLICY.automation, mode: 'REVIEW_BEFORE_ACTION', dryRunDefault: false } });
+    const { token } = await createProject(ctx, { mode: 'AUTO', rehearse: false });
+    const update = await submitOk(token, facts({ parts }));
+    await runDevUpdates(5); await settle(ctx);
+    const row = await ownerUpdate(ctx, update.id);
+    const approval = await actions.getApproval(row.jobId);
+    expect(approval?.status).toBe('PENDING');
+    for (const part of parts) expect(approval?.originalOutput).toContain(part);
+    const detail = await app.inject({ method: 'GET', url: `/api/jobs/${row.jobId}`, headers: ctx.owner });
+    expect(detail.json().data.threadParts).toEqual(parts);
+    await approveJob({ jobId: row.jobId, decidedBy: ctx.ownerId });
+    await settle(ctx);
+    expect((await ownerUpdate(ctx, update.id)).status).toBe('PUBLISHED');
+  });
+  it('skips completed parts before project gates when resuming', async () => {
+    const ctx = await threadSetup();
+    const { project, token } = await createProject(ctx, { mode: 'AUTO', rehearse: false });
+    const update = await submitOk(token, facts({ parts }));
+    const execute = mockAdapter.executeAction.bind(mockAdapter);
+    const send = vi.spyOn(mockAdapter, 'executeAction').mockImplementation(async (context, request) => {
+      if (request.text === parts[1]) throw PipelineError.retryable('interrupted', 'Interrupted.');
+      return execute(context, request);
+    });
+    await runDevUpdates(5); await drainAgentJobs(ctx.agentId);
+    const row = await ownerUpdate(ctx, update.id);
+    await setProject(ctx, project.id, { dailyCap: 1 });
+    // A later update uses the project slot while this admitted thread is interrupted.
+    const { token: otherToken } = await createProject(ctx, { projectKey: 'another', mode: 'AUTO', rehearse: false });
+    const other = await submitOk(otherToken, facts({ projectKey: 'another', post: 'Another completed change keeps the status page readable after a refresh.' }));
+    await runDevUpdates(5); await settle(ctx);
+    expect((await ownerUpdate(ctx, other.id)).status).toBe('PUBLISHED');
+    await query('UPDATE dev_updates SET project_id = $2 WHERE id = $1', [other.id, project.id]);
+    send.mockImplementation(execute);
+    mockAdapter.wasAlreadyDone = async () => ({ done: false, conclusive: true, remoteActionId: null, remoteActionUrl: null, detail: 'Absent.' });
+    try {
+      await makeDue(row.jobId); await settle(ctx);
+      expect((await ownerUpdate(ctx, update.id)).status).toBe('PUBLISHED');
+      expect((await actions.listJobActions(row.jobId)).filter((a) => a.status === 'EXECUTED')).toHaveLength(3);
+    } finally { delete mockAdapter.wasAlreadyDone; }
+  });
+  it('uses the ordinary post signature for the thread head', async () => {
+    const ctx = await threadSetup();
+    const { token } = await createProject(ctx, { mode: 'AUTO', rehearse: false });
+    const update = await submitOk(token, facts({ parts }));
+    await runDevUpdates(5); await settle(ctx);
+    const row = await ownerUpdate(ctx, update.id);
+    const { contentSignature } = await import('@xbam/shared');
+    expect(await actions.contentAlreadySent(ctx.agentId, contentSignature(`self:post:${ctx.accountId}`, parts[0]!))).toBe(true);
+    expect(row.status).toBe('PUBLISHED');
+  });
+  it('keeps capacity reserved for interrupted parts and releases it on cancellation', async () => {
+    const ctx = await threadSetup();
+    const { token } = await createProject(ctx, { mode: 'AUTO', rehearse: false });
+    const update = await submitOk(token, facts({ parts }));
+    const execute = mockAdapter.executeAction.bind(mockAdapter);
+    vi.spyOn(mockAdapter, 'executeAction').mockImplementation(async (context, request) => {
+      if (request.type === 'REPLY') throw PipelineError.retryable('interrupted', 'Interrupted.');
+      return execute(context, request);
+    });
+    await runDevUpdates(5); await drainAgentJobs(ctx.agentId);
+    const row = await ownerUpdate(ctx, update.id);
+    expect(await jobs.countRecentActions(ctx.agentId, 60)).toBe(3);
+    expect(await jobs.countRecentAccountActions(ctx.accountId, 60)).toBe(3);
+    await jobs.updateJob(row.jobId, { status: 'CANCELLED' });
+    expect(await jobs.countRecentActions(ctx.agentId, 60)).toBe(1);
+  });
+  it('keeps an admitted thread admitted after resolved context is rewritten', async () => {
+    const ctx = await threadSetup({ rate: { ...DEFAULT_POLICY.rate, maxActionsPerHour: 3, maxActionsPerDay: 3, minSecondsBetweenActions: 0 } });
+    const { token } = await createProject(ctx, { mode: 'AUTO', rehearse: false });
+    const update = await submitOk(token, facts({ parts }));
+    const execute = mockAdapter.executeAction.bind(mockAdapter);
+    vi.spyOn(mockAdapter, 'executeAction').mockImplementation(async (context, request) => {
+      if (request.text === parts[1]) throw PipelineError.retryable('interrupted', 'Interrupted.');
+      return execute(context, request);
+    });
+    await runDevUpdates(5); await drainAgentJobs(ctx.agentId);
+    const row = await ownerUpdate(ctx, update.id);
+    const [stamp] = await query<{ at: string }>('SELECT thread_admitted_at::text AS at FROM dev_updates WHERE id = $1', [update.id]);
+    expect(stamp?.at).toBeTruthy();
+    const job = await jobs.getJob(row.jobId);
+    const meta = { ...(job!.resolvedContext?.meta ?? {}) } as Record<string, unknown>;
+    meta.devUpdateAdmission = 'rewritten';
+    await jobs.updateJob(row.jobId, { resolvedContext: { ...job!.resolvedContext!, meta } });
+    expect(await jobs.countRecentActions(ctx.agentId, 60)).toBe(3);
+    vi.mocked(mockAdapter.executeAction).mockImplementation(execute);
+    mockAdapter.wasAlreadyDone = async () => ({ done: false, conclusive: true, remoteActionId: null, remoteActionUrl: null, detail: 'Absent.' });
+    try {
+      await makeDue(row.jobId); await settle(ctx);
+      const resumed = await ownerUpdate(ctx, update.id);
+      expect(resumed.status, resumed.reason).toBe('PUBLISHED');
+      const [again] = await query<{ at: string }>('SELECT thread_admitted_at::text AS at FROM dev_updates WHERE id = $1', [update.id]);
+      expect(again?.at).toBe(stamp!.at);
+      expect((await actions.listJobActions(row.jobId)).filter((a) => a.status === 'EXECUTED')).toHaveLength(3);
+    } finally { delete mockAdapter.wasAlreadyDone; }
+  });
+  it('publishes one original followed by replies to the previous published id', async () => {
+    const ctx = await threadSetup();
+    const { token } = await createProject(ctx, { mode: 'AUTO', rehearse: false });
+    const update = await submitOk(token, facts({ parts }));
+    expect(update.parts).toEqual(parts);
+    const send = vi.spyOn(mockAdapter, 'executeAction');
+    await runDevUpdates(5);
+    await settle(ctx);
+    const done = await ownerUpdate(ctx, update.id);
+    expect(done.status, done.reason).toBe('PUBLISHED');
+    const sent = await actions.listJobActions(done.jobId);
+    expect(sent).toHaveLength(3);
+    expect(send.mock.calls.map(([, r]) => r.text)).toEqual(parts);
+    expect(sent.map((a) => a.type)).toEqual(['POST', 'REPLY', 'REPLY']);
+    expect(sent.map((a) => a.targetRef)).toEqual([null, sent[0]!.remoteActionId, sent[1]!.remoteActionId]);
+    expect(new Set(sent.map((a) => a.idempotencyKey)).size).toBe(3);
+    const signatures = await query<{ content_signature: string }>('SELECT content_signature FROM actions WHERE job_id = $1', [done.jobId]);
+    expect(new Set(signatures.map((a) => a.content_signature)).size).toBe(3);
+  });
+  it.each(['stale', 'failed'] as const)('recovers a %s attempt after part two reached the remote without posting it twice', async (state) => {
+    const ctx = await threadSetup();
+    const { token } = await createProject(ctx, { mode: 'AUTO', rehearse: false });
+    const update = await submitOk(token, facts({ parts }));
+    const execute = mockAdapter.executeAction.bind(mockAdapter);
+    const published = new Map<string, Awaited<ReturnType<typeof execute>>>();
+    const send = vi.spyOn(mockAdapter, 'executeAction').mockImplementation(async (context, request) => {
+      const result = await execute(context, request);
+      published.set(request.text, result);
+      if (request.text === parts[1]) throw PipelineError.retryable('simulated_crash', 'Worker lost after submission.');
+      return result;
+    });
+    await runDevUpdates(5);
+    await drainAgentJobs(ctx.agentId);
+    const pending = await ownerUpdate(ctx, update.id);
+    expect(pending.status, pending.reason).toBe('DISPATCHED');
+    expect([...published.keys()]).toEqual(parts.slice(0, 2));
+    // Simulate a dead worker's unsettled action, then let the real claim retake it.
+    if (state === 'stale') {
+      await query('ALTER TABLE actions DISABLE TRIGGER actions_set_updated_at');
+      try {
+        await query("UPDATE actions SET status = 'EXECUTING', updated_at = now() - interval '11 minutes' WHERE job_id = $1 AND payload->>'text' = $2", [pending.jobId, parts[1]]);
+      } finally { await query('ALTER TABLE actions ENABLE TRIGGER actions_set_updated_at'); }
+    }
+    mockAdapter.wasAlreadyDone = vi.fn(async (_context, request) => {
+      const result = published.get(request.text);
+      return result ? { done: true, remoteActionId: result.remoteActionId, remoteActionUrl: result.remoteActionUrl, detail: 'Read back the published section.' } : { done: false, conclusive: true, remoteActionId: null, remoteActionUrl: null, detail: 'Confirmed absent.' };
+    });
+    try {
+      await makeDue(pending.jobId);
+      await settle(ctx);
+      const done = await ownerUpdate(ctx, update.id);
+      expect(done.status, done.reason).toBe('PUBLISHED');
+      expect(send.mock.calls.map(([, r]) => r.text)).toEqual(parts);
+      expect(mockAdapter.wasAlreadyDone).toHaveBeenCalledTimes(1);
+      expect((await actions.listJobActions(pending.jobId)).filter((a) => a.status === 'EXECUTED')).toHaveLength(3);
+    } finally { delete mockAdapter.wasAlreadyDone; }
+  });
+  it('refuses an unsafe later part before storing or sending the thread', async () => {
+    const ctx = await setup();
+    const { token } = await createProject(ctx, { mode: 'AUTO', rehearse: false });
+    const send = vi.spyOn(mockAdapter, 'executeAction');
+    const response = await submit(token, facts({ parts: [parts[0], 'The completed change is generated by an assistant and ready for everyone to use.'] }));
+    expect(response.statusCode).toBe(422);
+    await runDevUpdates(5);
+    await settle(ctx);
+    expect(send).not.toHaveBeenCalled();
+    expect((await query('SELECT id FROM dev_updates'))).toHaveLength(0);
+  });
+  it('approves edited parts together and repairs rhetorical dashes in every part', async () => {
+    const ctx = await threadSetup();
+    const { token } = await createProject(ctx, { rehearse: false });
+    const update = await submitOk(token, facts({ parts }));
+    const editedParts = [parts[0], 'Each section stays connected to its predecessor — readers can follow the complete explanation.', parts[2]];
+    const decision = await approve(ctx, update.id, { editedParts });
+    expect(decision.statusCode, decision.body).toBe(200);
+    const approved = (decision.json() as Json).data;
+    expect(approved.parts[1]).not.toContain('—');
+    expect(approved.parts[1]).toContain('readers can follow');
+    const send = vi.spyOn(mockAdapter, 'executeAction');
+    await runDevUpdates(5);
+    await settle(ctx);
+    const done = await ownerUpdate(ctx, update.id);
+    expect(done.status, done.reason).toBe('PUBLISHED');
+    expect(send.mock.calls.map(([, request]) => request.text)).toEqual(approved.parts);
+  });
+  it('checks an unsafe later part again before sending the first part', async () => {
+    const ctx = await threadSetup();
+    const { token } = await createProject(ctx, { mode: 'AUTO', rehearse: false });
+    const update = await submitOk(token, facts({ parts }));
+    await runDevUpdates(5);
+    await query("UPDATE dev_updates SET parts = jsonb_set(parts, '{1}', to_jsonb($2::text)) WHERE id = $1", [update.id, 'This completed change was generated by an assistant for everyone to use.']);
+    const send = vi.spyOn(mockAdapter, 'executeAction');
+    await settle(ctx);
+    expect((await ownerUpdate(ctx, update.id)).status).toBe('FAILED');
+    expect(send).not.toHaveBeenCalled();
+  });
+  it('keeps a one-part input in the existing single-post shape', async () => {
+    const ctx = await setup();
+    const { token } = await createProject(ctx);
+    const update = await submitOk(token, facts({ parts: [parts[0]] }));
+    expect(update.post).toBe(parts[0]);
+    expect(update).not.toHaveProperty('parts');
+    const [stored] = await query<{ parts: unknown; approved_parts: unknown }>('SELECT parts, approved_parts FROM dev_updates WHERE id = $1', [update.id]);
+    expect(stored).toEqual({ parts: null, approved_parts: null });
   });
 });

@@ -8,7 +8,8 @@
  *   npm run dev-updates -- revoke <projectId>       remove the sender token
  *   npm run dev-updates -- list [--project <id>] [--status PENDING_REVIEW]
  *   npm run dev-updates -- show <updateId>
- *   npm run dev-updates -- approve <updateId> [--text "edited post"] [--note "why"]
+ *   npm run dev-updates -- approve <updateId> [--text "edited post"] [--parts-file <json-file>] [--note "why"]
+ *   npm run dev-updates -- split --text "long update prose"
  *   npm run dev-updates -- reject <updateId> [--note "why"]
  *
  * Signs in with AI17Z_OWNER_TOKEN (a session token) or with AI17Z_OWNER_EMAIL
@@ -19,6 +20,9 @@
  * Everything here goes through the HTTP API, so it is exactly what the API
  * allows and no more.
  */
+
+import { readFile } from 'node:fs/promises';
+import { splitDevUpdate } from './dev-update-parts.mjs';
 
 const apiUrl = (process.env.AI17Z_API_URL || process.env.XBAM_API_URL || 'http://localhost:8787').replace(/\/+$/, '');
 
@@ -106,10 +110,11 @@ async function main(): Promise<void> {
   const [command, target] = positional;
   if (!command || command === 'help') {
     process.stdout.write(
-      'Commands: projects, create, set, token, revoke, list, show, approve, reject. See the top of tools/dev-updates.mts.\n',
+      'Commands: projects, create, set, token, revoke, list, show, approve, reject, split. Approve a thread with --parts-file <json-file>. See the top of tools/dev-updates.mts.\n',
     );
     return;
   }
+  if (command === 'split') return print(splitDevUpdate(need(flags.text, '--text')));
   const token = await ownerToken();
 
   switch (command) {
@@ -168,6 +173,7 @@ async function main(): Promise<void> {
       return print(
         await call('POST', `/api/dev-updates/updates/${need(target, 'an update id')}/approve`, token, {
           ...(flags.text ? { editedText: flags.text } : {}),
+          ...(flags['parts-file'] ? { editedParts: JSON.parse(await readFile(flags['parts-file'], 'utf8')) as unknown } : {}),
           ...(flags.note ? { note: flags.note } : {}),
         }),
       );

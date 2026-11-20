@@ -207,6 +207,8 @@ export interface ActionRequest {
    * different post.
    */
   media?: MediaAttachment[];
+  /** Set only for a thread's reply to its own previous DB-confirmed part. */
+  threadContinuation?: { previousPartStatusId: string };
 }
 
 export interface VerificationResult {

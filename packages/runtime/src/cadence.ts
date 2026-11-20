@@ -97,6 +97,7 @@ export async function checkAccountCadence(
    * strangers while replies to people who wrote in continue.
    */
   klass?: CapacityClass,
+  slots = 1,
 ): Promise<CadenceDecision> {
   if (klass) {
     const capacity = await checkWriteCapacity(accountId, klass, now);
@@ -125,7 +126,7 @@ export async function checkAccountCadence(
   const acting = config.acting;
   if (acting.maxActionsPerHour > 0) {
     const count = await jobsRepo.countRecentAccountActions(accountId, 60);
-    if (count >= acting.maxActionsPerHour) {
+    if (count + slots > acting.maxActionsPerHour) {
       return {
         allow: false,
         reason: 'account_hourly_limit',
@@ -137,7 +138,7 @@ export async function checkAccountCadence(
   }
   if (acting.maxActionsPerDay > 0) {
     const count = await jobsRepo.countRecentAccountActions(accountId, 60 * 24);
-    if (count >= acting.maxActionsPerDay) {
+    if (count + slots > acting.maxActionsPerDay) {
       return {
         allow: false,
         reason: 'account_daily_limit',
@@ -167,6 +168,6 @@ export async function checkAccountCadence(
 }
 
 /** Loads the cadence in force and evaluates it. */
-export async function checkAccountCadenceById(accountId: string, klass?: CapacityClass): Promise<CadenceDecision> {
-  return checkAccountCadence(accountId, await cadencesRepo.activeCadence(accountId), new Date(), klass);
+export async function checkAccountCadenceById(accountId: string, klass?: CapacityClass, slots = 1): Promise<CadenceDecision> {
+  return checkAccountCadence(accountId, await cadencesRepo.activeCadence(accountId), new Date(), klass, slots);
 }

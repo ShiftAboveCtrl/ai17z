@@ -75,6 +75,15 @@ beforeEach(() => {
 afterEach(() => { act(() => trees.forEach((t) => t.unmount())); trees = []; vi.unstubAllGlobals(); });
 
 describe('R4 deferred dev-updates regressions', () => {
+  it('labels only existing part editors and refreshes displayed parts after refetch', () => {
+    const props = { updates: [{ ...draft, parts: ['The first section.', 'The second section.'] }], agent: null, handle: null, rehearse: false, publishing: { tone: 'live' as const, words: 'Live', sentence: 'Ready to publish.', heldBy: null }, onDecided: vi.fn() };
+    const tree = mount(h(Review, props));
+    expect(tree.root.findAllByType('label')).toHaveLength(0);
+    act(() => tree.update(h(Review, { ...props, updates: [{ ...draft, parts: ['Updated first section.', 'Updated second section.'] }] })));
+    expect(content(tree)).toContain('Updated second section.');
+    act(() => tree.root.findAllByType('button').find((b) => b.children.some((c) => typeof c === 'string' && c.trim() === 'Edit'))!.props.onClick());
+    for (const label of tree.root.findAllByType('label')) expect(tree.root.findAllByProps({ id: label.props.htmlFor })).toHaveLength(1);
+  });
   it.each(['approve', 'reject'] as const)('keeps a successful %s decision locked until the queue refreshes', async (decision) => {
     const tree = mount(h(Review, { updates: [draft], agent: null, handle: null, rehearse: false, publishing: { tone: 'live', words: 'Live', sentence: 'Ready to publish.', heldBy: null }, onDecided: vi.fn() }));
     if (decision === 'reject') {
