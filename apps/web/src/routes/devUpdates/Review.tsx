@@ -44,7 +44,7 @@ export function Review({
     <ol className="space-y-5">
       {updates.map((update) => (
         <li key={update.id}>
-          <Draft update={update} agent={agent} handle={handle} rehearse={rehearse} publishing={publishing} onDecided={onDecided} />
+          <Draft key={JSON.stringify([update.post, update.parts])} update={update} agent={agent} handle={handle} rehearse={rehearse} publishing={publishing} onDecided={onDecided} />
         </li>
       ))}
     </ol>
@@ -164,7 +164,9 @@ function Draft({
               {parts.map((part, index) => (
                 <li key={index} className="space-y-2">
                   <div className="flex items-center justify-between gap-3">
-                    <label htmlFor={`${editId}-${index}`} className="eyebrow text-bone-dim">Part {index + 1} of {parts.length}</label>
+                    {mode === 'edit'
+                      ? <label htmlFor={`${editId}-${index}`} className="eyebrow text-bone-dim">Part {index + 1} of {parts.length}</label>
+                      : <span className="eyebrow text-bone-dim">Part {index + 1} of {parts.length}</span>}
                     <CharMeter length={[...part.trim()].length} />
                   </div>
                   <PostPreview agent={agent} handle={handle} text={part} edited={update.edited} media={index === 0 ? update.media : undefined}>

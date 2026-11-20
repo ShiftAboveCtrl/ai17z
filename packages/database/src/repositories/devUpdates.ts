@@ -31,6 +31,10 @@ export const DEV_UPDATE_STATUSES = [
 ] as const;
 export type DevUpdateStatus = (typeof DEV_UPDATE_STATUSES)[number];
 
+export async function updateForJob(jobId: string): Promise<DevUpdateRow | null> {
+  return mapRow<DevUpdateRow>(await queryOne('SELECT * FROM dev_updates WHERE job_id = $1', [jobId]));
+}
+
 /** Statuses that are over: nothing will happen to the update again. */
 export const DEV_UPDATE_FINAL_STATUSES: readonly DevUpdateStatus[] = [
   'PUBLISHED',
@@ -504,7 +508,7 @@ export async function transition(
     at: new Date().toISOString(),
     status: input.to,
     actor: input.actor,
-    reason: input.reason.slice(0, 500),
+    reason: input.reason.slice(0, 2_000),
   };
   const params: unknown[] = [input.id, [...input.from], input.to, entry.reason, JSON.stringify([entry])];
   const sets = ['status = $3', 'status_reason = $4', 'history = history || $5::jsonb', 'updated_at = now()'];
@@ -556,11 +560,11 @@ export async function recordGateDecision(input: {
 }
 
 /** Updates the reason on a row without changing its status, when something is still pending. */
-export async function noteReason(id: string, status: DevUpdateStatus, reason: string): Promise<void> {
+export async function noteReason(id: string, status: DevUpdateStatus, reason: string, remoteUrl?: string | null): Promise<void> {
   await query(
-    `UPDATE dev_updates SET status_reason = $3, updated_at = now()
-      WHERE id = $1 AND status = $2 AND status_reason IS DISTINCT FROM $3`,
-    [id, status, reason.slice(0, 500)],
+    `UPDATE dev_updates SET status_reason = $3, remote_url = coalesce($4, remote_url), updated_at = now()
+      WHERE id = $1 AND status = $2 AND (status_reason IS DISTINCT FROM $3 OR ($4::text IS NOT NULL AND remote_url IS DISTINCT FROM $4))`,
+    [id, status, reason.slice(0, 2_000), remoteUrl ?? null],
   );
 }
 

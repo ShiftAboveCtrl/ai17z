@@ -1,6 +1,6 @@
 import type { JobStatus, PipelineNode } from '@xbam/shared/contracts';
 import { PipelineError, truncate } from '@xbam/shared';
-import { actions as actionsRepo, jobs as jobsRepo, observability } from '@xbam/database';
+import { actions as actionsRepo, devUpdates as devUpdatesRepo, jobs as jobsRepo, observability } from '@xbam/database';
 import type { JobBundle } from './loadJob';
 import { paperRecordSendText } from './studioRecordLink';
 import {
@@ -148,7 +148,9 @@ const approvalNode: NodeHandler = async (bundle) => {
     ownerApproved: true,
   });
   if (closed !== output) await jobsRepo.updateJob(job.id, { validatedOutput: closed });
-  await actionsRepo.createApproval(job.id, closed);
+  const update = await devUpdatesRepo.updateForJob(job.id);
+  const parts = update?.approvedParts ?? update?.parts;
+  await actionsRepo.createApproval(job.id, parts ? parts.map((part, i) => `Part ${i + 1} of ${parts.length}\n${part}`).join('\n\n') : closed);
   await observability.emitTrace({
     jobId: job.id,
     agentId: bundle.agent.id,

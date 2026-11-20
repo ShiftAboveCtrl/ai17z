@@ -4,6 +4,7 @@ import {
   agents as agentsRepo,
   autonomy as autonomyRepo,
   events as eventsRepo,
+  devUpdates as devUpdatesRepo,
   jobs as jobsRepo,
   observability,
   targets as targetsRepo,
@@ -41,6 +42,11 @@ export async function approveJob(input: ApprovalDecisionInput): Promise<void> {
 
   const proposed = (input.editedOutput ?? job.validatedOutput ?? job.generatedOutput ?? '').trim();
   if (!proposed) throw new ConflictError('There is no message text to approve.');
+  const update = await devUpdatesRepo.updateForJob(job.id);
+  const parts = update?.approvedParts ?? update?.parts;
+  if (parts && input.editedOutput !== undefined && input.editedOutput !== parts[0]) {
+    throw new ConflictError('Edit the complete thread in Development updates before approving it.');
+  }
 
   // The same persona the job was generated against, for the same reason the
   // pipeline passes it: an address the operator wrote into the agent is one the
@@ -60,6 +66,10 @@ export async function approveJob(input: ApprovalDecisionInput): Promise<void> {
       violations: validation.violations,
     });
   }
+  if (parts?.some((part) => {
+    const checked = validateOutput(part, policy, null, operatorText);
+    return checked.output !== part || checked.violations.some((v) => v.severity === 'REJECT');
+  })) throw new ConflictError('The complete thread needs a fresh review in Development updates.');
 
   try {
     await actionsRepo.decideApproval({
@@ -73,7 +83,7 @@ export async function approveJob(input: ApprovalDecisionInput): Promise<void> {
     // REVIEW_REQUIRED jobs have no approval row yet; create one so the decision
     // is still on the record rather than being lost.
     if (!(error instanceof NotFoundError)) throw error;
-    await actionsRepo.createApproval(job.id, job.generatedOutput ?? proposed);
+    await actionsRepo.createApproval(job.id, parts ? parts.map((part, i) => `Part ${i + 1} of ${parts.length}\n${part}`).join('\n\n') : job.generatedOutput ?? proposed);
     await actionsRepo.decideApproval({
       jobId: job.id,
       status: 'APPROVED',

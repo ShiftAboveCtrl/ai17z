@@ -71,15 +71,19 @@ post representation. Multi-part updates retain their proposed and approved
 parts in migration 0143. The Review screen shows every part and its count;
 one owner decision approves the complete thread. Edit it before dispatch with
 `editedParts`, preserving its part count. The CLI accepts
-`approve <updateId> --parts-file <json-file>` and can prepare a word-boundary
+`approve <updateId> --parts-file <json-file>` and can prepare a paragraph and sentence
 split with `npm run dev-updates -- split --text "long update prose"`.
 
 The account must grant both POST and REPLY. Part one is an original post;
 later parts reply to the previous part's confirmed status id. Every part uses
-the ordinary executor with a key and content signature derived from the update
-id and zero-based part index. Safety and policy check the complete thread before
-any send, then repeat at each send. Existing cadence, rate and pause gates can
-hold a thread between parts. A failure stops publishing; recovery skips durable
+the ordinary executor with a key derived from the update id and zero-based part
+index. The head uses the ordinary account POST content signature. Safety and
+policy check the complete thread before any send, then repeat at each send.
+Admission checks account cadence and agent rate limits for every part together;
+unfinished parts reserve capacity across retries. Continuations do not recheck
+cooldowns or project spacing. Pause, health and permission gates still apply.
+A failure stops publishing and records every confirmed part with its link;
+recovery skips durable
 completed parts and asks `wasAlreadyDone` before retrying an unsettled attempt.
 Unknown remote outcomes stop without sending again. Every section needs a read
 back and a published status id before the next one can start. Attachments go

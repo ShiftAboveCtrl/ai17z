@@ -1135,8 +1135,19 @@ export async function reconcileOne(row: DevUpdateRow): Promise<DevUpdateRow> {
   const job = await jobsRepo.getJob(row.jobId);
   if (!job) return row;
 
+  const published = row.parts ? (await actionsRepo.listJobActions(job.id)).filter((a) => a.status === 'EXECUTED' && !a.dryRun) : [];
+  const publicParts = row.parts?.flatMap((_, i) => {
+    const part = published.find((a) => a.idempotencyKey === `devupdate:${row.id}:part:${i}`);
+    return part ? [`Part ${i + 1} published: ${part.remoteActionUrl ?? 'link unavailable'}.`] : [];
+  }) ?? [];
+  const headUrl = published.find((a) => a.idempotencyKey === `devupdate:${row.id}:part:0`)?.remoteActionUrl ?? null;
+  const progress = publicParts.length ? ` ${publicParts.join(' ')} ${publicParts.length < row.parts!.length ? `Part ${publicParts.length + 1} and any later parts are not confirmed as published.` : ''}` : '';
+  const withProgress = (reason: string) => progress ? `${progress.trim()} ${reason}` : reason;
+
   const settle = async (to: DevUpdateStatus, reason: string, extra: { remoteUrl?: string | null; scrub?: boolean; approvedText?: string | null } = {}) =>
-    (await repo.transition({ id: row.id, from: ['DISPATCHED'], to, actor: 'system', reason, finished: true, ...extra })) ?? row;
+    (await repo.transition({ id: row.id, from: ['DISPATCHED'], to, actor: 'system',
+      reason: to === 'PUBLISHED' ? reason : withProgress(reason), finished: true,
+      ...(headUrl ? { remoteUrl: headUrl } : {}), ...extra })) ?? row;
 
   switch (job.status) {
     case 'EXECUTED': {
@@ -1171,16 +1182,17 @@ export async function reconcileOne(row: DevUpdateRow): Promise<DevUpdateRow> {
       return settle('CANCELLED', `Stopped before posting: ${job.lastError ?? 'cancelled.'}`);
     }
     case 'WAITING_FOR_APPROVAL':
-      await repo.noteReason(row.id, 'DISPATCHED', "Waiting at the agent's approval gate. Approve or reject it to continue.");
+      await repo.noteReason(row.id, 'DISPATCHED', withProgress("Waiting at the agent's approval gate. Approve or reject it to continue."), headUrl);
       break;
     case 'REVIEW_REQUIRED':
-      await repo.noteReason(row.id, 'DISPATCHED', `Needs the owner: ${job.lastError ?? 'the pipeline asked for a person.'}`);
+      await repo.noteReason(row.id, 'DISPATCHED', withProgress(`Needs the owner: ${job.lastError ?? 'the pipeline asked for a person.'}`), headUrl);
       break;
     default:
       await repo.noteReason(
         row.id,
         'DISPATCHED',
-        `In the agent's queue (${job.status.toLowerCase().replace(/_/g, ' ')})${job.lastError ? `: ${job.lastError}` : '.'}`,
+        withProgress(`In the agent's queue (${job.status.toLowerCase().replace(/_/g, ' ')})${job.lastError ? `: ${job.lastError}` : '.'}`),
+        headUrl,
       );
   }
   return (await repo.getUpdate(row.id)) ?? row;

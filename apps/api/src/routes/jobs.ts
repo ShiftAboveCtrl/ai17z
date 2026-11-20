@@ -6,6 +6,7 @@ import {
   actions as actionsRepo,
   agents as agentsRepo,
   events as eventsRepo,
+  devUpdates as devUpdatesRepo,
   jobs as jobsRepo,
   memories as memoriesRepo,
   mentions as mentionsRepo,
@@ -175,7 +176,9 @@ export async function jobRoutes(app: FastifyInstance): Promise<void> {
         jobsRepo.listJobAttempts(job.id),
         ops.listDiagnostics({ jobId: job.id, limit: 20 }),
       ]);
-      return { job, event, trace, modelCalls, retrievals, actions, approval, attempts, diagnostics };
+      const update = await devUpdatesRepo.updateForJob(job.id);
+      const threadParts = update?.approvedParts ?? update?.parts ?? null;
+      return { job, event, trace, modelCalls, retrievals, actions, approval, attempts, diagnostics, threadParts };
     }),
   );
 

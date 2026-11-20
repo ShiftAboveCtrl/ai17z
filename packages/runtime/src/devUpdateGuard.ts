@@ -39,6 +39,7 @@ export async function checkDevUpdateAtSend(input: {
   text: string;
   policy: PolicyConfig;
   operatorText: string;
+  admittedThread?: boolean;
 }): Promise<void> {
   const raw = (input.raw ?? {}) as { origin?: unknown; devUpdateId?: unknown };
   if (raw.origin !== 'dev_update' || typeof raw.devUpdateId !== 'string') return;
@@ -116,6 +117,7 @@ export async function checkDevUpdateAtSend(input: {
 
   // The ceiling and the spacing, on what was really sent. A limit that has not
   // cleared is a wait, not a failure: retryAfterMs charges no attempt.
+  if (update.parts && input.admittedThread) return;
   const sent = await repo.sentWindow(project.id, input.jobId);
   const now = Date.now();
   if (sent.lastDay >= project.dailyCap) {

@@ -113,20 +113,7 @@ export interface DevUpdateRefusal {
 export const PUBLIC_DISCLOSURE = 'PUBLIC';
 export const POST_MAX_CHARS = 280;
 
-/** Split prose at whitespace; never truncate a word or a Unicode code point. */
-export function splitDevUpdate(text: string): string[] {
-  const parts: string[] = [];
-  let current = '';
-  for (const word of text.trim().split(/\s+/u)) {
-    if ([...word].length > POST_MAX_CHARS) throw new Error('A word exceeds 280 code points. Supply explicit parts.');
-    const next = current ? `${current} ${word}` : word;
-    if ([...next].length > POST_MAX_CHARS) { parts.push(current); current = word; }
-    else current = next;
-  }
-  if (current) parts.push(current);
-  if (!parts.length || parts.length > 6) throw new Error('An update needs one to six parts.');
-  return parts;
-}
+export { splitDevUpdate } from '../../../tools/dev-update-parts.mjs';
 
 // ── Secrets ─────────────────────────────────────────────────────────────────
 

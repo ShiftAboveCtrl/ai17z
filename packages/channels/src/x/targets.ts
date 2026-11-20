@@ -9,6 +9,22 @@
 
 const X_HOST = 'x.com';
 
+/** A continuation permits only the exact previous status confirmed by the runtime. */
+export function replyTargetAllowed(input: {
+  type: string;
+  targetStatusId: string | null;
+  anchoredStatusId: string | null;
+  authorHandle: string | null;
+  selfHandles: readonly string[];
+  previousPartStatusId?: string;
+}): boolean {
+  if (!input.targetStatusId || input.anchoredStatusId !== input.targetStatusId) return false;
+  const author = normalizeHandle(input.authorHandle);
+  const self = author !== null && input.selfHandles.some((handle) => normalizeHandle(handle) === author);
+  if (!self) return true;
+  return input.type === 'REPLY' && input.previousPartStatusId === input.targetStatusId;
+}
+
 export function normalizeTargetId(input: string | null | undefined): string | null {
   if (!input) return null;
   const raw = String(input).trim();

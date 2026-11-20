@@ -63,7 +63,7 @@ import { checkTraderDnaAtSend } from '../studioTraderDna';
 import { checkMostCheckedAtSend } from '../studioCheckBoard';
 import { checkNarrativePulseAtSend } from '../narrativePulse';
 import { asksForPublicHome, HOME_IDEA_SOURCE, publicHomeReply, publicHomeSendRefusal } from '../studioPublicHome';
-import { capacityClassForEvent } from '../capacity';
+import { capacityClassForEvent, checkWriteCapacity } from '../capacity';
 
 import { adapterContext } from '../channelContext';
 import { checkEvidenceCardAtSend } from '../evidenceCard';
@@ -229,17 +229,25 @@ export function actionIdempotencyKeyFor(input: {
   });
 }
 
-interface ThreadPart { updateId: string; index: number }
+interface ThreadPart { updateId: string; index: number; previousPartStatusId: string | null }
 
 export async function stepExecute(bundle: JobBundle): Promise<void> {
   const raw = (bundle.event.payload ?? {}) as { origin?: string; devUpdateId?: string };
   const update = raw.origin === 'dev_update' && raw.devUpdateId ? await devUpdatesRepo.getUpdate(raw.devUpdateId) : null;
   if (!update?.parts) return executePart(bundle);
   const parts = update.approvedParts ?? update.parts;
+  const completed = bundle.job.dryRun ? [] : (await actionsRepo.listJobActions(bundle.job.id)).filter((a) => a.status === 'EXECUTED');
+  if (!bundle.job.dryRun && parts.every((_, index) => completed.some((a) =>
+    a.idempotencyKey === `devupdate:${update.id}:part:${index}` && a.remoteActionId))) {
+    await jobsRepo.updateJob(bundle.job.id, { status: 'EXECUTED', touch: ['executedAt'], releaseLock: true });
+    return;
+  }
+  const admitted = bundle.job.resolvedContext?.meta.devUpdateAdmission === update.id;
   // Preflight the whole unit before the first action claim or send.
   await checkDevUpdateAtSend({ raw, jobId: bundle.job.id, agentId: bundle.agent.id,
     accountId: bundle.job.accountId, dryRun: bundle.job.dryRun, text: bundle.job.validatedOutput ?? '',
-    policy: bundle.policy, operatorText: [bundle.persona.biography, bundle.persona.customInstructions].filter(Boolean).join('\n') });
+    policy: bundle.policy, admittedThread: admitted,
+    operatorText: [bundle.persona.biography, bundle.persona.customInstructions].filter(Boolean).join('\n') });
   if (!bundle.job.dryRun) {
     const granted = await capabilitiesRepo.grantsFor(bundle.agent.id, bundle.job.accountId!);
     if (!granted.has('POST') || !granted.has('REPLY')) throw PipelineError.permanent('capability_not_granted', 'Publishing a thread requires POST and REPLY permissions.');
@@ -248,9 +256,17 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
   if (!bundle.job.dryRun && await actionsRepo.threadTextAlreadySent(bundle.agent.id, bundle.job.accountId!, bundle.job.id, parts)) {
     throw PipelineError.permanent('dev_update_duplicate_part', 'A section of this thread was already published in another update. Nothing more was sent.');
   }
+  if (!bundle.job.dryRun && !admitted) {
+    const rate = await checkActionRate(bundle.agent.id, bundle.policy, bundle.job.accountId, capacityClassForEvent(bundle.event.type), parts.length);
+    if (!rate.allow) throw PipelineError.retryable(rate.reason, rate.message, { retryAfterMs: rate.retryAfterMs });
+    // The account lease protects admission. Outstanding sections remain counted across retries.
+    const resolvedContext = { ...bundle.job.resolvedContext!, meta: { ...bundle.job.resolvedContext?.meta, devUpdateAdmission: update.id } };
+    await jobsRepo.updateJob(bundle.job.id, { resolvedContext });
+    bundle = { ...bundle, job: { ...bundle.job, resolvedContext } };
+  }
   let targetRef: string | null = null;
   for (let index = 0; index < parts.length; index += 1) {
-    const part = { updateId: update.id, index };
+    const part = { updateId: update.id, index, previousPartStatusId: targetRef };
     const key = `devupdate:${update.id}:part:${index}`;
     const resolvedContext = { ...bundle.job.resolvedContext!, targetRef };
     await executePart({ ...bundle, event: { ...bundle.event, payload: { ...raw, devUpdatePart: index,
@@ -269,6 +285,11 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
 
 /** The ordinary executor, also used for each thread section under the job's existing account lease. */
 async function executePart(bundle: JobBundle, threadPart?: ThreadPart): Promise<void> {
+  // Completed sections are durable and must not pass through send gates again.
+  if (threadPart && !bundle.job.dryRun) {
+    const done = (await actionsRepo.listJobActions(bundle.job.id)).find((a) => a.idempotencyKey === bundle.job.idempotencyKey && a.status === 'EXECUTED');
+    if (done) return;
+  }
   await preparePostMedia(bundle);
   const { job, policy } = bundle;
   const validated = job.validatedOutput;
@@ -354,13 +375,8 @@ async function executePart(bundle: JobBundle, threadPart?: ThreadPart): Promise<
     text: output,
     policy,
     operatorText: [bundle.persona.biography, bundle.persona.customInstructions].filter(Boolean).join('\n'),
+    admittedThread: Boolean(threadPart && job.resolvedContext?.meta.devUpdateAdmission === threadPart.updateId),
   });
-
-  // Completed sections are durable. Never spend another rate slot or send again.
-  if (threadPart && !job.dryRun) {
-    const done = (await actionsRepo.listJobActions(job.id)).find((a) => a.idempotencyKey === actionIdempotencyKey && a.status === 'EXECUTED');
-    if (done) return;
-  }
 
   // A post made from the owner's Studio paper record is read once more as
   // finished text, with the policy as it is now: the owner may have switched
@@ -388,7 +404,7 @@ async function executePart(bundle: JobBundle, threadPart?: ThreadPart): Promise<
       }
     }
 
-    const rate = await checkActionRate(
+    const rate = threadPart ? { allow: true as const } : await checkActionRate(
       bundle.agent.id,
       policy,
       bundle.job.accountId,
@@ -397,13 +413,17 @@ async function executePart(bundle: JobBundle, threadPart?: ThreadPart): Promise<
     if (!rate.allow) {
       throw PipelineError.retryable(rate.reason, rate.message, { retryAfterMs: rate.retryAfterMs });
     }
+    if (threadPart && job.accountId) {
+      const capacity = await checkWriteCapacity(job.accountId, capacityClassForEvent(bundle.event.type));
+      if (!capacity.allowed) throw PipelineError.retryable('account_capacity', capacity.message, { retryAfterMs: capacity.retryAfterMs ?? 60_000 });
+    }
   }
 
   // A post has no target, so its signature is taken against the account itself.
   // Without this the "have we already sent this exact text" check simply does
   // not apply to posts, and an agent could publish the same thought twice.
   const signatureRef = targetRef ?? (job.actionType === 'POST' ? `self:post:${job.accountId ?? 'none'}` : null);
-  const signature = threadPart ? contentSignature(`devupdate:${threadPart.updateId}:part:${threadPart.index}`, output)
+  const signature = threadPart && threadPart.index > 0 ? contentSignature(`devupdate:${threadPart.updateId}:part:${threadPart.index}`, output)
     : signatureRef ? contentSignature(signatureRef, output) : null;
 
   // A previous system may already have sent this exact text to this target.
@@ -688,6 +708,8 @@ async function executePart(bundle: JobBundle, threadPart?: ThreadPart): Promise<
       idempotencyKey: job.channel === 'farcaster' ? actionIdempotencyKey : job.idempotencyKey,
       dryRun: job.dryRun,
       ...(media.length > 0 ? { media } : {}),
+      ...(threadPart?.previousPartStatusId && !job.dryRun && targetRef === threadPart.previousPartStatusId
+        ? { threadContinuation: { previousPartStatusId: threadPart.previousPartStatusId } } : {}),
     });
 
     await observability.emitTrace({

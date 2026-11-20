@@ -97,11 +97,12 @@ export async function checkActionRate(
   accountId?: string | null,
   /** Who this action is for, so the account's X breaker can hold it in order. */
   klass?: CapacityClass,
+  slots = 1,
 ): Promise<GateDecision> {
   const now = new Date();
 
   if (accountId) {
-    const account = await checkAccountCadenceById(accountId, klass);
+    const account = await checkAccountCadenceById(accountId, klass, slots);
     if (!account.allow) {
       return {
         allow: false,
@@ -125,7 +126,7 @@ export async function checkActionRate(
 
   if (policy.rate.maxActionsPerHour > 0) {
     const lastHour = await jobsRepo.countRecentActions(agentId, 60);
-    if (lastHour >= policy.rate.maxActionsPerHour) {
+    if (lastHour + slots > policy.rate.maxActionsPerHour) {
       return {
         allow: false,
         kind: 'RETRYABLE',
@@ -138,7 +139,7 @@ export async function checkActionRate(
 
   if (policy.rate.maxActionsPerDay > 0) {
     const lastDay = await jobsRepo.countRecentActions(agentId, 60 * 24);
-    if (lastDay >= policy.rate.maxActionsPerDay) {
+    if (lastDay + slots > policy.rate.maxActionsPerDay) {
       return {
         allow: false,
         kind: 'RETRYABLE',

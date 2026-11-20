@@ -30,7 +30,7 @@ import { readMediaInventory } from './media';
 import { readPage, webSearch } from './websearch';
 import { screenshotPublicPage } from '../postScreenshot';
 import { type ArticleSnapshot, parentTextOf, resolveBranch } from './conversation';
-import { buildStatusUrl, extractStatusId, looksUnavailable, normalizeHandle, normalizeTargetId } from './targets';
+import { buildStatusUrl, extractStatusId, looksUnavailable, normalizeHandle, normalizeTargetId, replyTargetAllowed } from './targets';
 import {
   MAX_ARTICLES_READ,
   MAX_SCROLL_PASSES,
@@ -627,7 +627,9 @@ export const xAdapter: ChannelAdapter = {
           evidence: { anchoredStatusId: snapshot.statusId },
         };
       }
-      if (snapshot.authorHandle && selfHandles(ctx).includes(snapshot.authorHandle)) {
+      if (!replyTargetAllowed({ type: request.type, targetStatusId: statusId, anchoredStatusId: snapshot.statusId,
+        authorHandle: snapshot.authorHandle, selfHandles: selfHandles(ctx),
+        previousPartStatusId: request.threadContinuation?.previousPartStatusId })) {
         return {
           verified: false,
           detail: `The target post belongs to this account (@${snapshot.authorHandle}). Refusing to self-reply.`,

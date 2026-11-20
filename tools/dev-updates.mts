@@ -22,7 +22,7 @@
  */
 
 import { readFile } from 'node:fs/promises';
-import { splitDevUpdate } from '../packages/runtime/src/devUpdateSafety';
+import { splitDevUpdate } from './dev-update-parts.mjs';
 
 const apiUrl = (process.env.AI17Z_API_URL || process.env.XBAM_API_URL || 'http://localhost:8787').replace(/\/+$/, '');
 

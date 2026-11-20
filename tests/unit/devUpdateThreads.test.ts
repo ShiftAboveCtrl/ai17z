@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { DevUpdateSubmissionInput, checkPostText, splitDevUpdate } from '../../packages/runtime/src/devUpdateSafety';
+import { replyTargetAllowed } from '../../packages/channels/src/x/targets';
 
 describe('development update parts', () => {
+  it('preserves paragraph breaks and prefers complete sentences', () => {
+    const first = 'Readers can follow the complete change. '.repeat(4).trim();
+    const second = 'The next paragraph explains how recovery keeps the published sections in order. '.repeat(2).trim();
+    expect(splitDevUpdate(`${first}\n\n${second}`)).toEqual([first, second]);
+    expect(splitDevUpdate('A short paragraph.\n\nAnother paragraph.')).toEqual(['A short paragraph.\n\nAnother paragraph.']);
+    expect(splitDevUpdate(`${'A complete sentence. '.repeat(10)}${'More detail follows. '.repeat(8)}`.trim())[0]).toMatch(/[.!?]$/);
+  });
   it('splits on words without losing text or splitting code points', () => {
     const text = 'Published improvements make longer conversations easier to follow. '.repeat(8).trim();
     const parts = splitDevUpdate(text);
@@ -22,5 +30,22 @@ describe('development update parts', () => {
     expect(DevUpdateSubmissionInput.safeParse({ ...base, post: 'text', parts: ['text'] }).success).toBe(false);
     expect(checkPostText('😀'.repeat(280)).some((r) => r.code === 'TOO_LONG')).toBe(false);
     expect(checkPostText('😀'.repeat(281)).some((r) => r.code === 'TOO_LONG')).toBe(true);
+  });
+});
+
+describe('exact reply target decision without an adapter', () => {
+  const base = { type: 'REPLY', targetStatusId: '123456', anchoredStatusId: '123456', authorHandle: 'self', selfHandles: ['self'] };
+  it('allows only the recorded previous part as a self continuation', () => {
+    expect(replyTargetAllowed({ ...base, previousPartStatusId: '123456' })).toBe(true);
+  });
+  it('refuses every other self reply, including a different recorded part', () => {
+    expect(replyTargetAllowed(base)).toBe(false);
+    expect(replyTargetAllowed({ ...base, previousPartStatusId: '987654' })).toBe(false);
+  });
+  it('allows someone else with the same exact target verification', () => {
+    expect(replyTargetAllowed({ ...base, authorHandle: 'reader' })).toBe(true);
+  });
+  it('refuses an anchor mismatch even for the recorded continuation', () => {
+    expect(replyTargetAllowed({ ...base, anchoredStatusId: '987654', previousPartStatusId: '123456' })).toBe(false);
   });
 });

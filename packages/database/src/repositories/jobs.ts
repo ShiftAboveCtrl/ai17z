@@ -405,6 +405,19 @@ export async function countJobsByStatus(agentId?: string): Promise<Record<string
 }
 
 /** Actions executed in the trailing window, used by the rate-limit policy. */
+async function reservedThreadParts(scope: 'agent_id' | 'account_id', id: string): Promise<number> {
+  const row = await queryOne<{ count: number }>(
+    `SELECT coalesce(sum(greatest(0, jsonb_array_length(u.parts) -
+       (SELECT count(*) FROM actions a WHERE a.job_id = j.id AND a.status = 'EXECUTED' AND NOT a.dry_run))), 0)::int AS count
+       FROM dev_updates u JOIN jobs j ON j.id = u.job_id
+      WHERE j.${scope} = $1 AND NOT j.dry_run AND u.parts IS NOT NULL
+        AND j.resolved_context #>> '{meta,devUpdateAdmission}' = u.id::text
+        AND j.status NOT IN ('EXECUTED', 'DRY_RUN_COMPLETED', 'PERMANENT_FAILURE', 'CANCELLED')`,
+    [id],
+  );
+  return row?.count ?? 0;
+}
+
 export async function countRecentActions(agentId: string, sinceMinutes: number): Promise<number> {
   const row = await queryOne<{ count: number }>(
     `SELECT count(*)::int AS count FROM actions
@@ -412,7 +425,7 @@ export async function countRecentActions(agentId: string, sinceMinutes: number):
         AND executed_at > now() - ($2::int * interval '1 minute')`,
     [agentId, sinceMinutes],
   );
-  return row?.count ?? 0;
+  return (row?.count ?? 0) + await reservedThreadParts('agent_id', agentId);
 }
 
 /**
@@ -428,7 +441,7 @@ export async function countRecentAccountActions(accountId: string, sinceMinutes:
         AND executed_at > now() - ($2::int * interval '1 minute')`,
     [accountId, sinceMinutes],
   );
-  return row?.count ?? 0;
+  return (row?.count ?? 0) + await reservedThreadParts('account_id', accountId);
 }
 
 export async function lastAccountActionAt(accountId: string): Promise<string | null> {
