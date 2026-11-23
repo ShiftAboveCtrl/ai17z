@@ -193,9 +193,9 @@ describe('a capability whose source has gone', () => {
     });
 
     expect(result.answer).toBe('Answered without it.');
-    // A switched-off capability is never on the menu, so a call to it is refused
-    // before anything runs: no step, and the model is told to pick from the menu.
-    expect(result.steps).toHaveLength(0);
+    // A refusal records what the model asked for while leaving the job healthy.
+    expect(result.steps).toHaveLength(1);
+    expect(result.steps[0]!.outcome).toBe('REFUSED');
     expect(JSON.stringify(generate.mock.calls[1]![0])).toMatch(/not offered/);
   });
 

@@ -178,8 +178,11 @@ describe('a goal becomes a bounded plan on a worker wake', () => {
     }));
     await wakeAgent(f.agentId, { mayResearch: true });
     expect(runs).toBe(0);
-    expect(await planFor(f.agentId)).toMatchObject({ state: 'EXHAUSTED', steps: [] });
-    expect(await capabilityInvocations.listForAgent(f.agentId)).toEqual([]);
+    expect(await planFor(f.agentId)).toMatchObject({ state: 'STOPPED',
+      summary: expect.stringContaining('not offered'), steps: [{ outcome: 'REFUSED' }] });
+    const recorded = await capabilityInvocations.listForAgent(f.agentId);
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toMatchObject({ outcome: 'REFUSED', detail: expect.stringContaining('not offered') });
   });
 
   it('an approval requirement stops the plan for the owner', async () => {

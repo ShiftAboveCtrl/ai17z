@@ -10,6 +10,7 @@ import {
   renderInstructions,
   renderMenu,
   type AnyCapability,
+  type InvocationResult,
 } from '@xbam/tools';
 import { zodToDescription } from './capabilityInputShape';
 import { shortlistCapabilities, type Shortlist } from './capabilityRelevance';
@@ -239,11 +240,7 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
     if (options.goalPlan && Date.now() >= deadline) { exhausted = true; break; }
 
     const raw = await options.generate(messages);
-    let turn = parseTurn(raw);
-    const chosenId = turn.kind === 'call' ? turn.call.id : null;
-    if (turn.kind === 'call' && !offered.some(capability => capability.id === chosenId)) {
-      turn = { kind: 'malformed', reason: 'That capability was not offered. Choose an id from the menu.', raw };
-    }
+    const turn = parseTurn(raw);
 
     // A slow model cannot spend the remaining budget and then start a remote
     // action. No extra final model call belongs to an exhausted goal plan.
@@ -273,7 +270,8 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
       continue;
     }
 
-    if (current && current.autonomy !== 'ACT') {
+    const wasOffered = offered.some(capability => capability.id === turn.call.id);
+    if (wasOffered && current && current.autonomy !== 'ACT') {
       const parsed = getCapability(turn.call.id)?.input.safeParse(turn.call.input);
       const detail = 'Proposed for the owner; this agent is below ACT.';
       const stoppedStep = { capabilityId: turn.call.id, outcome: 'PROPOSED',
@@ -283,7 +281,17 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
       return { answer: '', steps, exhausted: false, shortlist, halted: 'PROPOSED', reason: detail };
     }
 
-    const result = await invokeCapability({
+    // A model can name something absent from its menu. Record the refusal
+    // through the same path as an invocation without running readiness or code.
+    const parsed = !wasOffered ? getCapability(turn.call.id)?.input.safeParse(turn.call.input) : undefined;
+    const result: InvocationResult = !wasOffered ? {
+      capabilityId: turn.call.id,
+      outcome: 'REFUSED',
+      detail: "That capability was not offered on this turn's menu.",
+      durationMs: 0,
+      input: parsed?.success ? parsed.data : null,
+      output: null,
+    } : await invokeCapability({
       call: turn.call,
       context: {
         agentId: options.agentId,
