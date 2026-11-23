@@ -132,7 +132,7 @@ describe('a capability whose source has gone', () => {
       agentId: 'agent-1',
       jobId: null,
       accountId: null,
-      messages: [{ role: 'user', content: 'what is the thing?' }],
+      messages: [{ role: 'user', content: 'read the thing from somewhere outside' }],
       generate,
       permissions: new Map([['test.read_thing', 'ALLOWED' as const]]),
       paused: false,
@@ -163,7 +163,7 @@ describe('a capability whose source has gone', () => {
       agentId: 'agent-1',
       jobId: null,
       accountId: null,
-      messages: [{ role: 'user', content: 'what is the thing?' }],
+      messages: [{ role: 'user', content: 'read the thing from somewhere outside' }],
       generate,
       permissions: new Map([['test.read_thing', 'ALLOWED' as const]]),
       paused: false,
@@ -193,7 +193,10 @@ describe('a capability whose source has gone', () => {
     });
 
     expect(result.answer).toBe('Answered without it.');
-    expect(result.steps[0]!.outcome).toBe('REFUSED');
+    // A switched-off capability is never on the menu, so a call to it is refused
+    // before anything runs: no step, and the model is told to pick from the menu.
+    expect(result.steps).toHaveLength(0);
+    expect(JSON.stringify(generate.mock.calls[1]![0])).toMatch(/not offered/);
   });
 
   it('answers normally when nothing is asked for at all', async () => {
