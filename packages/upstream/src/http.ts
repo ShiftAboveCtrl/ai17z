@@ -86,6 +86,8 @@ export interface SafeFetchOptions {
    * request authenticated to AI17Z Studio, which has no reason to redirect one.
    */
   noRedirects?: boolean;
+  /** Stop a bounded text stream once its complete protocol response arrives. */
+  textComplete?: (text: string) => boolean;
 }
 
 export class UnsafeUrlError extends Error {
@@ -180,7 +182,7 @@ export async function safeFetch(rawUrl: string, options: SafeFetchOptions): Prom
         continue;
       }
 
-      const body = await read(response as unknown as Response, maxBytes);
+      const body = await read(response as unknown as Response, maxBytes, options.textComplete);
       return {
         status: response.status,
         url: url.toString(),
@@ -260,12 +262,14 @@ async function attempt(
  * decode that happens in here cannot be undone by a caller that needed the
  * original octets.
  */
-async function read(response: Response, maxBytes: number): Promise<Uint8Array> {
+async function read(response: Response, maxBytes: number, textComplete?: (text: string) => boolean): Promise<Uint8Array> {
   const body = response.body;
   if (!body) return new Uint8Array(0);
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
+  const decoder = new TextDecoder();
+  let text = '';
   try {
     for (;;) {
       const { done, value } = await reader.read();
@@ -277,6 +281,13 @@ async function read(response: Response, maxBytes: number): Promise<Uint8Array> {
         throw new UnsafeUrlError(`That response is larger than ${maxBytes} bytes, so it was not read.`);
       }
       chunks.push(value);
+      if (textComplete) {
+        text += decoder.decode(value, { stream: true });
+        if (textComplete(text)) {
+          await reader.cancel().catch(() => undefined);
+          break;
+        }
+      }
     }
   } finally {
     reader.releaseLock?.();

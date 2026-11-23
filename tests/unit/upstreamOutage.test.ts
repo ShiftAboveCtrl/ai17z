@@ -132,7 +132,7 @@ describe('a capability whose source has gone', () => {
       agentId: 'agent-1',
       jobId: null,
       accountId: null,
-      messages: [{ role: 'user', content: 'what is the thing?' }],
+      messages: [{ role: 'user', content: 'read the thing from somewhere outside' }],
       generate,
       permissions: new Map([['test.read_thing', 'ALLOWED' as const]]),
       paused: false,
@@ -163,7 +163,7 @@ describe('a capability whose source has gone', () => {
       agentId: 'agent-1',
       jobId: null,
       accountId: null,
-      messages: [{ role: 'user', content: 'what is the thing?' }],
+      messages: [{ role: 'user', content: 'read the thing from somewhere outside' }],
       generate,
       permissions: new Map([['test.read_thing', 'ALLOWED' as const]]),
       paused: false,
@@ -193,7 +193,10 @@ describe('a capability whose source has gone', () => {
     });
 
     expect(result.answer).toBe('Answered without it.');
+    // A refusal records what the model asked for while leaving the job healthy.
+    expect(result.steps).toHaveLength(1);
     expect(result.steps[0]!.outcome).toBe('REFUSED');
+    expect(JSON.stringify(generate.mock.calls[1]![0])).toMatch(/not offered/);
   });
 
   it('answers normally when nothing is asked for at all', async () => {

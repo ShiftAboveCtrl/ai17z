@@ -61,7 +61,7 @@ export type PluginSource = (typeof PLUGIN_SOURCES)[number];
  * remote operation above. `FEATURE` unlocks a module that already ships, and
  * unlocks nothing that does not: an entitlement cannot invent a feature.
  */
-export const PLUGIN_KINDS = ['CAPABILITY_PACK', 'HTTP_CAPABILITY', 'FEATURE'] as const;
+export const PLUGIN_KINDS = ['CAPABILITY_PACK', 'HTTP_CAPABILITY', 'FEATURE', 'MCP_SERVER'] as const;
 export type PluginKind = (typeof PLUGIN_KINDS)[number];
 
 /** The manifest schema this build understands. Refused if it is not this. */
@@ -306,6 +306,28 @@ export type PluginOwnerPanel = z.infer<typeof PluginOwnerPanel>;
  * refusal rather than something silently ignored: a field this build does not
  * understand may be the one that mattered.
  */
+export const PluginMcpTool = z.object({
+  name: z.string().min(1).max(128).regex(/^[A-Za-z0-9_.-]+$/),
+  description: z.string().max(100_000).default('').transform(text => text.slice(0, 600)),
+  inputSchema: z.record(z.string(), z.unknown()).refine(value => JSON.stringify(value).length <= 16_000, 'MCP input schema is too large'),
+  readOnlyHint: z.boolean().default(false),
+}).strict();
+export type PluginMcpTool = z.infer<typeof PluginMcpTool>;
+
+export const PluginMcpServer = z.object({
+  url: z.string().max(500).url().refine(raw => {
+    try {
+      const url = new URL(raw);
+      return url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash;
+    } catch { return false; } // A malformed address is a validation refusal.
+  }, 'MCP needs an https URL without credentials, query or fragment'),
+  timeoutMs: z.number().int().min(1_000).max(30_000).default(10_000),
+  quotaPerHour: z.number().int().min(1).max(600).default(60),
+  credentialKey: z.string().regex(/^[a-z][a-z0-9_]*$/).max(64).optional(),
+  tools: z.array(PluginMcpTool).max(64).default([]),
+}).strict();
+export type PluginMcpServer = z.infer<typeof PluginMcpServer>;
+
 export const PluginManifest = z
   .object({
     schemaVersion: z.literal(PLUGIN_MANIFEST_SCHEMA),
@@ -329,6 +351,7 @@ export const PluginManifest = z
       })
       .strict(),
     kind: z.enum(PLUGIN_KINDS),
+    mcp: PluginMcpServer.optional(),
     homepage: z.string().trim().url().max(300).optional(),
     config: z.array(PluginConfigField).max(8).default([]),
     capabilities: z.array(PluginCapabilityDeclaration).max(12).default([]),
@@ -347,6 +370,20 @@ export const PluginManifest = z
   })
   .strict()
   .superRefine((manifest, ctx) => {
+    if ((manifest.kind === 'MCP_SERVER') !== Boolean(manifest.mcp)) {
+      ctx.addIssue({ code: 'custom', message: 'MCP_SERVER and its mcp declaration must be supplied together' });
+    }
+    if (manifest.mcp) {
+      if (manifest.capabilities.length || manifest.features.length) {
+        ctx.addIssue({ code: 'custom', message: 'an MCP Plugin contributes only its discovered tools' });
+      }
+      if (new Set(manifest.mcp.tools.map(tool => tool.name)).size !== manifest.mcp.tools.length) {
+        ctx.addIssue({ code: 'custom', message: 'MCP tool names must be unique' });
+      }
+      if (manifest.mcp.credentialKey && !manifest.config.some(field => field.key === manifest.mcp!.credentialKey && field.secret && field.required)) {
+        ctx.addIssue({ code: 'custom', message: 'an MCP credential must name a required secret config field' });
+      }
+    }
     if (manifest.kind === 'HTTP_CAPABILITY' && manifest.capabilities.length === 0) {
       ctx.addIssue({ code: 'custom', message: 'an HTTP_CAPABILITY Plugin has to declare at least one capability' });
     }
@@ -666,6 +703,7 @@ export function comparePluginVersions(a: string, b: string): -1 | 0 | 1 {
  * than derived from anything that could have drifted.
  */
 export interface PluginFootprint {
+  mcp?: PluginMcpServer;
   hosts: string[];
   capabilities: string[];
   features: PluginFeature[];
@@ -682,14 +720,15 @@ export interface PluginFootprint {
 
 export function pluginFootprint(manifest: PluginManifest): PluginFootprint {
   return {
-    hosts: [...new Set(manifest.capabilities.flatMap((capability) => capability.http.hosts))].sort(),
-    capabilities: manifest.capabilities.map((capability) => capability.name).sort(),
+    mcp: manifest.mcp,
+    hosts: [...new Set([...manifest.capabilities.flatMap((capability) => capability.http.hosts), ...(manifest.mcp ? [new URL(manifest.mcp.url).hostname] : [])])].sort(),
+    capabilities: [...manifest.capabilities.map((capability) => capability.name), ...(manifest.mcp?.tools.map(tool => tool.name) ?? [])].sort(),
     features: [...manifest.features].sort(),
     creative: manifest.creative,
-    effects: [...new Set(manifest.capabilities.map((capability) => capability.effect))].sort(),
-    risks: [...new Set(manifest.capabilities.map((capability) => capability.risk))].sort(),
+    effects: [...new Set([...manifest.capabilities.map((capability) => capability.effect), ...(manifest.mcp ? ['READ'] : [])])].sort(),
+    risks: [...new Set([...manifest.capabilities.map((capability) => capability.risk), ...(manifest.mcp ? ['LOW'] : [])])].sort(),
     wantsSecret: manifest.config.some((field) => field.secret),
-    quotaPerHour: manifest.capabilities.reduce((most, capability) => Math.max(most, capability.http.quotaPerHour), 0),
+    quotaPerHour: manifest.capabilities.reduce((most, capability) => Math.max(most, capability.http.quotaPerHour), manifest.mcp?.quotaPerHour ?? 0),
   };
 }
 
@@ -707,6 +746,17 @@ export function pluginFootprint(manifest: PluginManifest): PluginFootprint {
  */
 export function footprintExpansion(before: PluginFootprint, after: PluginFootprint): string[] {
   const grew: string[] = [];
+  if (after.mcp) {
+    if (!before.mcp || before.mcp.url !== after.mcp.url) grew.push('It adds or changes the MCP endpoint.');
+    if (before.mcp && after.mcp.timeoutMs > before.mcp.timeoutMs) grew.push('It raises the MCP timeout.');
+    if (before.mcp && after.mcp.credentialKey !== before.mcp.credentialKey) grew.push('It changes the MCP credential slot.');
+    for (const tool of after.mcp.tools) {
+      const old = before.mcp?.tools.find(entry => entry.name === tool.name);
+      if (old && ((!old.readOnlyHint && tool.readOnlyHint) || JSON.stringify(old.inputSchema) !== JSON.stringify(tool.inputSchema))) {
+        grew.push(`It changes the input or read permission of MCP tool ${tool.name}.`);
+      }
+    }
+  }
   const added = <T>(was: readonly T[], now: readonly T[]) => now.filter((entry) => !was.includes(entry));
 
   const hosts = added(before.hosts, after.hosts);

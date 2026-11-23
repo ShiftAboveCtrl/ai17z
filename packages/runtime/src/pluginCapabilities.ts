@@ -10,6 +10,7 @@ import type {
 import { safeFetch } from '@xbam/upstream';
 import { defineCapability, type AnyCapability } from '@xbam/tools';
 import { marketplaceGate, studioGatewayHeaders, studioOrigin } from './studioLink';
+import { mcpCapability } from './mcpCapabilities';
 
 /**
  * Turning a Plugin's declaration into a real capability.
@@ -291,5 +292,6 @@ export function declaredCapability(
 
 /** Every capability an installed Plugin contributes. */
 export function capabilitiesOf(installed: Pick<InstalledPlugin, 'id' | 'manifest'> & { requiresEntitlement?: boolean }): AnyCapability[] {
+  if (installed.manifest.mcp) return installed.manifest.mcp.tools.map(tool => mcpCapability(installed, tool));
   return installed.manifest.capabilities.map((declaration) => declaredCapability(installed, declaration));
 }

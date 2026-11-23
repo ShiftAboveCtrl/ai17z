@@ -77,6 +77,36 @@ const base = {
 };
 
 describe('the capability loop', () => {
+  it.each([
+    { input: { ignored: 'not retained' }, parsed: {} },
+    { input: 'invalid input', parsed: null },
+  ])('records one refusal for a not-offered call with input $input without invoking it', async ({ input, parsed }) => {
+    const tools = await import('@xbam/tools');
+    const { capabilityInvocations } = await import('@xbam/database');
+    const invoke = vi.spyOn(tools, 'invokeCapability');
+    const run = vi.spyOn(settingsProbe, 'run');
+    const audit = vi.spyOn(capabilityInvocations, 'recordInvocation');
+    const generate = vi.fn().mockResolvedValueOnce(call('test.settings', input)).mockResolvedValueOnce('Answered without it.');
+    try {
+      const result = await runCapabilityLoop({ ...base, generate });
+      expect(audit).toHaveBeenCalledExactlyOnceWith({
+        agentId: 'agent-1', jobId: 'job-1', accountId: null,
+        capabilityId: 'test.settings', step: 1, outcome: 'REFUSED',
+        detail: expect.stringContaining('not offered'), input: parsed, output: null, durationMs: 0,
+      });
+      expect(result.steps).toEqual([{
+        capabilityId: 'test.settings', outcome: 'REFUSED', detail: expect.stringContaining('not offered'),
+        input: parsed, output: null, durationMs: 0,
+      }]);
+      expect(invoke).not.toHaveBeenCalled();
+      expect(run).not.toHaveBeenCalled();
+      expect(result.answer).toBe('Answered without it.');
+      expect(generate.mock.calls[1]![0]).toContainEqual({
+        role: 'system', content: `test.settings did not run: ${result.steps[0]!.detail}`,
+      });
+    } finally { vi.restoreAllMocks(); }
+  });
+
   it('answers without asking for anything when it does not need to', async () => {
     const generate = vi.fn().mockResolvedValue('It is noon.');
     const result = await runCapabilityLoop({ ...base, generate });
@@ -104,16 +134,30 @@ describe('the capability loop', () => {
     expect(secondMessages.some((m) => m.content.includes('noon'))).toBe(true);
   });
 
-  it('records every step, including one it refused', async () => {
+  it('records a refusal when the model names an unknown capability', async () => {
     const generate = vi
       .fn()
       .mockResolvedValueOnce(call('test.invented'))
       .mockResolvedValueOnce('I could not look that up.');
     const result = await runCapabilityLoop({ ...base, generate });
 
-    expect(result.steps[0]).toMatchObject({ outcome: 'REFUSED' });
-    // A refusal is exactly the thing an owner wants to see afterwards.
+    expect(result.steps).toMatchObject([{ capabilityId: 'test.invented', outcome: 'REFUSED', input: null }]);
     expect(recorded).toEqual([{ capabilityId: 'test.invented', outcome: 'REFUSED', step: 1 }]);
+    expect(generate.mock.calls[1]![0].some((m: { content: string }) => m.content.includes('not offered'))).toBe(true);
+  });
+
+  it('exhausts the step budget when the final turn is malformed', async () => {
+    const result = await runCapabilityLoop({ ...base, maxSteps: 1,
+      generate: vi.fn().mockResolvedValueOnce(`${CALL_OPEN}bad${CALL_CLOSE}`).mockResolvedValueOnce('Stopped.') });
+    expect(result.exhausted).toBe(true);
+    expect(result.steps).toEqual([]);
+  });
+
+  it('does not invoke a registered capability that was not offered', async () => {
+    const result = await runCapabilityLoop({ ...base, permissions: new Map([['test.settings', 'DISABLED' as const]]),
+      generate: vi.fn().mockResolvedValueOnce(call('test.settings')).mockResolvedValueOnce('Stopped.') });
+    expect(result.steps).toMatchObject([{ capabilityId: 'test.settings', outcome: 'REFUSED' }]);
+    expect(recorded).toEqual([{ capabilityId: 'test.settings', outcome: 'REFUSED', step: 1 }]);
   });
 
   it('tells the model plainly when its call was malformed', async () => {
@@ -226,9 +270,7 @@ describe('the menu the model is shown', () => {
     expect(generate.mock.calls[0]![0]).toHaveLength(1);
   });
 
-  it('refuses a disabled capability anyway if the model asks for one', async () => {
-    // Not offering it is a saving, not a security boundary. The permission
-    // check at invocation is the boundary and it still runs.
+  it('records a refusal for a disabled capability missing from the menu', async () => {
     const generate = vi
       .fn()
       .mockResolvedValueOnce(call('test.clock'))
@@ -238,7 +280,8 @@ describe('the menu the model is shown', () => {
       generate,
       permissions: new Map([['test.clock', 'DISABLED' as const]]),
     });
-    expect(result.steps[0]!.outcome).toBe('REFUSED');
+    expect(result.steps).toMatchObject([{ capabilityId: 'test.clock', outcome: 'REFUSED' }]);
+    expect(recorded).toEqual([{ capabilityId: 'test.clock', outcome: 'REFUSED', step: 1 }]);
   });
 });
 
@@ -253,6 +296,7 @@ describe('what a capability is configured with', () => {
       ...base,
       generate,
       configs: new Map([['test.settings', { maxResults: 5, language: 'en' }]]),
+      task: 'test.settings',
     });
 
     expect(result.steps[0]!.outcome).toBe('SUCCEEDED');
@@ -272,6 +316,7 @@ describe('what a capability is configured with', () => {
       ...base,
       generate,
       configs: new Map([['test.clock', { irrelevant: true }]]),
+      task: 'test.settings',
     });
 
     // Another capability's settings must never arrive here.
@@ -285,6 +330,20 @@ describe('a goal plan uses the same loop with live gates', () => {
   const checkpoint = () => Promise.resolve({
     permissions: new Map(), configs: new Map(), paused: false,
     autonomy: 'ACT' as const, enabled: true,
+  });
+
+  it.each(['ACT', 'SUGGEST'] as const)('at %s stops and records a not-offered call without proposing it', async autonomy => {
+    const onStep = vi.fn();
+    const result = await runCapabilityLoop({
+      ...base, generate: async () => call('test.settings'),
+      goalPlan: {
+        checkpoint: async () => ({ ...await checkpoint(), autonomy }), onStep,
+      },
+    });
+    expect(result).toMatchObject({ halted: 'STOPPED', exhausted: false, reason: expect.stringContaining('not offered') });
+    expect(result.steps).toMatchObject([{ capabilityId: 'test.settings', outcome: 'REFUSED' }]);
+    expect(onStep).toHaveBeenCalledExactlyOnceWith(result.steps[0], 1);
+    expect(recorded).toEqual([{ capabilityId: 'test.settings', outcome: 'REFUSED', step: 1 }]);
   });
 
   it('stops before invoking a call returned after the time budget', async () => {

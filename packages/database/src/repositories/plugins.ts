@@ -1,5 +1,6 @@
 import { openSecret, sealSecret } from '@xbam/shared';
 import type { InstalledPlugin, PluginManifest, PluginSource } from '@xbam/shared/contracts';
+import * as capabilityPermissions from './capabilityPermissions';
 import { query, withTransaction } from '../pool';
 
 /**
@@ -69,20 +70,50 @@ export async function putInstalledPlugin(input: {
   manifestSha256: string;
   manifest: PluginManifest;
   requiresEntitlement?: boolean;
+  /** An MCP discovery credential is sealed in the same transaction as its snapshot. */
+  secret?: { agentId: string; key: string; value: string };
+  /** New and removed MCP tools cannot inherit a stale grant on any agent. */
+  resetCapabilityIds?: string[];
+  /**
+   * Tools whose read hint or input schema changed. Existing rows become
+   * DISABLED in this same transaction, so a refused tool cannot keep a grant.
+   */
+  disableCapabilityIds?: string[];
+  /** A changed endpoint host drops every agent's sealed credential for this Plugin. */
+  clearSecrets?: boolean;
 }): Promise<void> {
-  await query(
-    `INSERT INTO installed_plugins (id, source, version, publisher, manifest_sha256, manifest, requires_entitlement)
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
-     ON CONFLICT (id) DO UPDATE
-        SET source = excluded.source,
-            version = excluded.version,
-            publisher = excluded.publisher,
-            manifest_sha256 = excluded.manifest_sha256,
-            manifest = excluded.manifest,
-            requires_entitlement = excluded.requires_entitlement,
-            updated_at = now()`,
-    [input.id, input.source, input.version, input.publisher, input.manifestSha256, JSON.stringify(input.manifest), input.requiresEntitlement ?? false],
-  );
+  await withTransaction(async tx => {
+    await tx.query(
+      `INSERT INTO installed_plugins (id, source, version, publisher, manifest_sha256, manifest, requires_entitlement)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+       ON CONFLICT (id) DO UPDATE
+          SET source = excluded.source,
+              version = excluded.version,
+              publisher = excluded.publisher,
+              manifest_sha256 = excluded.manifest_sha256,
+              manifest = excluded.manifest,
+              requires_entitlement = excluded.requires_entitlement,
+              updated_at = now()`,
+      [input.id, input.source, input.version, input.publisher, input.manifestSha256, JSON.stringify(input.manifest), input.requiresEntitlement ?? false],
+    );
+    if (input.secret) {
+      await tx.query(
+        `INSERT INTO agent_plugin_secrets (agent_id, plugin_id, config_key, sealed)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (agent_id, plugin_id, config_key) DO UPDATE SET sealed = excluded.sealed, updated_at = now()`,
+        [input.secret.agentId, input.id, input.secret.key, sealSecret(input.secret.value)],
+      );
+    }
+    if (input.resetCapabilityIds?.length) {
+      await tx.query('DELETE FROM agent_capability_permissions WHERE capability_id = ANY($1::text[])', [input.resetCapabilityIds]);
+    }
+    if (input.disableCapabilityIds?.length) {
+      await capabilityPermissions.disableForCapabilities(input.disableCapabilityIds, tx);
+    }
+    if (input.clearSecrets) {
+      await tx.query('DELETE FROM agent_plugin_secrets WHERE plugin_id = $1', [input.id]);
+    }
+  });
 }
 
 /**

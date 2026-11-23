@@ -24,7 +24,7 @@ import {
   uninstallPlugin,
 } from '@xbam/runtime';
 import { z } from 'zod';
-import { ForbiddenError, NotFoundError } from '@xbam/shared';
+import { ForbiddenError, NotFoundError, PluginManifest } from '@xbam/shared';
 import { handler, params, parseBody, requireUser } from '../http';
 
 /** The same ownership check every agent route makes, made the same way. */
@@ -49,6 +49,38 @@ async function ownedAgent(agentId: string, user: UserRow) {
  * keys are filled.
  */
 export async function registerPluginRoutes(app: FastifyInstance): Promise<void> {
+  app.post('/api/agents/:id/plugins/mcp', handler(async request => {
+    const user = await requireUser(request);
+    const agent = await ownedAgent(params(request).id!, user);
+    const body = parseBody(z.object({ manifest: z.string().min(2).max(200_000),
+      credential: z.string().min(1).max(4_000).optional(), acknowledgeExpansion: z.boolean().default(false) }).strict(), request);
+    let manifest: PluginManifest;
+    try { manifest = PluginManifest.parse(JSON.parse(body.manifest)); }
+    catch { return { ok: false, why: 'The MCP manifest is not supported.' }; }
+    if (!manifest.mcp) return { ok: false, why: 'This route needs an MCP_SERVER Plugin.' };
+    const done = await installPlugin({ raw: body.manifest, source: 'LOCAL', mcpAgentId: agent.id,
+      mcpCredential: body.credential, acknowledgeExpansion: body.acknowledgeExpansion });
+    if (!done.ok) return done;
+    await ops.audit({ actorUserId: user.id, action: 'plugin.installed', entityType: 'plugin', entityId: done.plugin.id,
+      data: { source: 'LOCAL', version: done.plugin.version } });
+    return { ok: true, plugin: { id: done.plugin.id, version: done.plugin.version } };
+  }));
+
+  app.post('/api/agents/:id/plugins/:pluginId/mcp/refresh', handler(async request => {
+    const user = await requireUser(request);
+    const agent = await ownedAgent(params(request).id!, user);
+    const record = await pluginsRepo.getInstalledPlugin(params(request).pluginId!);
+    if (!record) throw new NotFoundError('Plugin');
+    if (!record.manifest.mcp) return { ok: false, why: 'This Plugin is not an MCP server.' };
+    const body = parseBody(z.object({ acknowledgeExpansion: z.boolean().default(false) }).strict(), request);
+    const done = await installPlugin({ raw: JSON.stringify(record.manifest), source: 'LOCAL', mcpAgentId: agent.id,
+      acknowledgeExpansion: body.acknowledgeExpansion });
+    if (!done.ok) return done;
+    await ops.audit({ actorUserId: user.id, action: 'plugin.updated', entityType: 'plugin', entityId: done.plugin.id,
+      data: { source: 'LOCAL', version: done.plugin.version } });
+    return { ok: true, plugin: { id: done.plugin.id, version: done.plugin.version } };
+  }));
+
   /** Everything installed, for one agent, with that agent's decisions in it. */
   app.get(
     '/api/agents/:id/plugins',
