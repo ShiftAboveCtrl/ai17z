@@ -21,6 +21,10 @@ export interface GenerateRequest {
   /** Use this single role instead of walking the fallback chain. */
   role?: ModelRole;
   signal?: AbortSignal;
+  /** Deliberation keeps structured conclusions rather than a model transcript. */
+  retainOutput?: boolean;
+  /** Caps the provider's existing timeout to a caller's remaining budget. */
+  timeoutMs?: number;
 }
 
 export interface GenerateResult {
@@ -152,13 +156,13 @@ export async function generate(request: GenerateRequest): Promise<GenerateResult
           model: target.model,
           messages: request.messages,
           parameters: target.parameters,
-          timeoutMs: target.timeoutMs,
+          timeoutMs: Math.min(target.timeoutMs, request.timeoutMs ?? target.timeoutMs),
           signal: request.signal,
         });
         const latencyMs = Date.now() - startedAt;
         await observability.finishModelCall(modelCallId, {
           status: 'COMPLETED',
-          rawOutput: response.text,
+          rawOutput: request.retainOutput === false ? null : response.text,
           requestId: response.requestId,
           latencyMs,
           promptTokens: response.promptTokens,

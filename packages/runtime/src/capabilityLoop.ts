@@ -1,9 +1,10 @@
 import { capabilityInvocations } from '@xbam/database';
 import { createLogger, type Logger } from '@xbam/shared';
-import type { ChatMessage } from '@xbam/shared/contracts';
+import type { AutonomyLevel, ChatMessage } from '@xbam/shared/contracts';
 import { permissionWhenUnset, type CapabilityPermission } from '@xbam/shared/contracts';
 import {
   invokeCapability,
+  getCapability,
   listModelCallable,
   parseTurn,
   renderInstructions,
@@ -77,6 +78,17 @@ export interface LoopOptions {
   maxSteps?: number;
   budgetMs?: number;
   logger?: Logger;
+  /** A wake owns the plan; the loop remains the only capability executor. */
+  goalPlan?: {
+    checkpoint(): Promise<{
+      permissions: Map<string, CapabilityPermission>;
+      configs: Map<string, Record<string, unknown>>;
+      paused: boolean;
+      autonomy: AutonomyLevel;
+      enabled: boolean;
+    }>;
+    onStep(step: LoopResult['steps'][number], index: number): Promise<void>;
+  };
 }
 
 export interface LoopResult {
@@ -89,9 +101,12 @@ export interface LoopResult {
     durationMs: number;
     /** What it returned, validated, or null on anything but success. */
     output: unknown;
+    input?: unknown;
   }[];
   /** True when the loop stopped because it ran out of steps or time. */
   exhausted: boolean;
+  halted?: 'PROPOSED' | 'STOPPED';
+  reason?: string;
   /**
    * What was on offer, and how much was narrowed away to get there.
    *
@@ -214,8 +229,31 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
       break;
     }
 
+    // Recheck before spending a model call as well as before using its choice.
+    // PAUSE ALL stops planning itself, and a permission read must fail closed.
+    const before = await options.goalPlan?.checkpoint();
+    if (before && (before.paused || !before.enabled)) {
+      return { answer: '', steps, exhausted: false, shortlist, halted: 'STOPPED',
+        reason: before.paused ? 'Everything is paused.' : 'The goal or its capability loop is no longer enabled.' };
+    }
+    if (options.goalPlan && Date.now() >= deadline) { exhausted = true; break; }
+
     const raw = await options.generate(messages);
     const turn = parseTurn(raw);
+
+    // A slow model cannot spend the remaining budget and then start a remote
+    // action. No extra final model call belongs to an exhausted goal plan.
+    if (options.goalPlan && Date.now() >= deadline) {
+      exhausted = true;
+      break;
+    }
+
+    const current = await options.goalPlan?.checkpoint();
+    if (current && (current.paused || !current.enabled)) {
+      return { answer: '', steps, exhausted: false, shortlist, halted: 'STOPPED',
+        reason: current.paused ? 'Everything is paused.' : 'The goal or its capability loop is no longer enabled.' };
+    }
+    if (options.goalPlan && Date.now() >= deadline) { exhausted = true; break; }
 
     if (turn.kind === 'answer') {
       return { answer: turn.text, steps, exhausted: false, shortlist };
@@ -230,21 +268,32 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
       continue;
     }
 
+    if (current && current.autonomy !== 'ACT') {
+      const parsed = getCapability(turn.call.id)?.input.safeParse(turn.call.input);
+      const detail = 'Proposed for the owner; this agent is below ACT.';
+      const stoppedStep = { capabilityId: turn.call.id, outcome: 'PROPOSED',
+        detail, durationMs: 0, output: null, input: parsed?.success ? parsed.data : null };
+      steps.push(stoppedStep);
+      await options.goalPlan!.onStep(stoppedStep, step);
+      return { answer: '', steps, exhausted: false, shortlist, halted: 'PROPOSED', reason: detail };
+    }
+
     const result = await invokeCapability({
       call: turn.call,
       context: {
         agentId: options.agentId,
         jobId: options.jobId,
         accountId: options.accountId,
-        config: options.configs?.get(turn.call.id) ?? {},
+        config: (current?.configs ?? options.configs)?.get(turn.call.id) ?? {},
         audience,
         origin: audience === 'OWNER' ? (options.origin ?? null) : null,
         logger,
       },
       permission: {
-        stored: options.permissions.get(turn.call.id) ?? null,
-        paused: options.paused,
+        stored: (current?.permissions ?? options.permissions).get(turn.call.id) ?? null,
+        paused: current?.paused ?? options.paused,
       },
+      ...(options.goalPlan ? { budgetMs: Math.max(0, deadline - Date.now()) } : {}),
     });
 
     steps.push({
@@ -253,6 +302,7 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
       detail: result.detail,
       durationMs: result.durationMs,
       output: result.output,
+      input: result.input,
     });
 
     // Recorded before the model is told, so a crash between the two leaves
@@ -279,10 +329,29 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
         });
       });
 
+    if (options.goalPlan) {
+      await options.goalPlan.onStep(steps[steps.length - 1]!, step);
+      // Retrying a denied step cannot restore a grant. A new wake must not
+      // revive this plan either; its owner records the terminal result.
+      if (result.outcome !== 'SUCCEEDED') {
+        if (result.outcome === 'TIMED_OUT' && Date.now() >= deadline) {
+          return { answer: '', steps, exhausted: true, shortlist,
+            reason: 'The plan ended because its time budget was exhausted.' };
+        }
+        return { answer: '', steps, exhausted: false, shortlist, halted: 'STOPPED', reason: result.detail };
+      }
+    }
+
     messages.push({ role: 'assistant', content: raw });
     messages.push({ role: 'system', content: describeResult(result) });
 
     if (step === maxSteps) exhausted = true;
+  }
+
+  if (options.goalPlan) {
+    return { answer: '', steps, exhausted, shortlist,
+      reason: Date.now() >= deadline ? 'The plan ended because its time budget was exhausted.'
+        : 'The plan ended because its step budget was exhausted.' };
   }
 
   // Out of steps or out of time. The model gets one last turn with everything

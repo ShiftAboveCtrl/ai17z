@@ -25,6 +25,8 @@ export interface InvokeOptions {
   context: Omit<CapabilityContext, 'signal'>;
   /** Everything the permission answer needs except the capability itself. */
   permission: Omit<PermissionInputs, 'capability' | 'readiness'>;
+  /** Remaining loop budget, using the invocation's existing timeout. */
+  budgetMs?: number;
 }
 
 /**
@@ -82,6 +84,10 @@ export async function invokeCapability(options: InvokeOptions): Promise<Invocati
     return done('REFUSED', decision.why, { input: parsedInput.data });
   }
 
+  const timeoutMs = Math.min(capability.timeoutMs, options.budgetMs === undefined
+    ? capability.timeoutMs : Math.max(0, options.budgetMs - (Date.now() - started)));
+  if (timeoutMs <= 0) return done('TIMED_OUT', 'The plan time budget was exhausted before this capability could run.');
+
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   /**
@@ -102,7 +108,7 @@ export async function invokeCapability(options: InvokeOptions): Promise<Invocati
     timer = setTimeout(() => {
       controller.abort();
       resolve(TIMEOUT);
-    }, capability.timeoutMs);
+    }, timeoutMs);
   });
   try {
     /**
@@ -120,7 +126,7 @@ export async function invokeCapability(options: InvokeOptions): Promise<Invocati
       expired,
     ]);
     if (raw === TIMEOUT) {
-      return done('TIMED_OUT', `${capability.name} took longer than ${capability.timeoutMs}ms and was abandoned.`, {
+      return done('TIMED_OUT', `${capability.name} took longer than ${timeoutMs}ms and was abandoned.`, {
         input: parsedInput.data,
       });
     }
