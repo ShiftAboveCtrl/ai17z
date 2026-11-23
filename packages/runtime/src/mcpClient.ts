@@ -1,6 +1,20 @@
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { safeFetch } from '@xbam/upstream';
 import { PluginMcpServer, PluginMcpTool } from '@xbam/shared/contracts';
+
+/** Stable across jsonb key order, so a saved snapshot matches the tool it was built from. */
+export function mcpSchemaHash(schema: Record<string, unknown>): string {
+  const canon = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(canon);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(Object.keys(value as Record<string, unknown>).sort()
+        .map(key => [key, canon((value as Record<string, unknown>)[key])]));
+    }
+    return value;
+  };
+  return createHash('sha256').update(JSON.stringify(canon(schema))).digest('hex');
+}
 
 type Transport = typeof safeFetch;
 const VERSION = '2025-11-25';
@@ -11,7 +25,7 @@ class LegacyEndpoint extends Error {}
 
 /** Server descriptions are evidence, never instructions or trusted markup. */
 export function fenceMcpText(raw: string, limit = 600): string {
-  const text = raw.slice(0, limit).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const text = raw.replace(/\p{Cf}/gu, '').slice(0, limit).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/`/g, '&#96;').split('').filter(char => char === '\n' || char === '\t' ||
       (char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127)).join('').slice(0, limit * 2);
   return `<untrusted-mcp>\n${text}\n</untrusted-mcp>`;

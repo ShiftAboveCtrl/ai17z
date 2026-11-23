@@ -34,7 +34,9 @@ Endpoint URLs reject userinfo, query strings and fragments to keep credentials o
 of portable metadata. Only public HTTPS destinations pass `safeFetch`; redirects
 are refused before credentials can leave the approved endpoint.
 An endpoint change is checked for footprint expansion before discovery can send
-an existing sealed credential to the proposed address.
+an existing sealed credential to the proposed address. When the endpoint host
+changes, every sealed credential for that Plugin is deleted in the same
+transaction as the snapshot, and each owner enters it again.
 
 Refresh with `POST /api/agents/:id/plugins/:pluginId/mcp/refresh`. Both attach
 and refresh fetch the entire paginated `tools/list`, bound its size, and save the
@@ -48,7 +50,11 @@ schemas, makes a refused tool readable, changes the endpoint or raises limits
 uses `pluginFootprint` and `footprintExpansion`. A refusal returns
 `needsAcknowledgement` sentences and leaves the previous snapshot registered.
 The owner repeats with `acknowledgeExpansion: true` after reviewing those facts.
-Acknowledging expansion does not enable a newly added tool.
+Acknowledging expansion does not enable a newly added tool. On refresh, any
+tool whose `readOnlyHint` or input schema changed has its per-agent permission
+rows set back to `DISABLED`, in the same transaction as the snapshot. A new
+tool has those rows deleted. A refused tool never keeps a grant from the
+Plugin being enabled, and the owner enables it again.
 
 ## Boundaries
 
@@ -57,7 +63,8 @@ listed with an unavailable sentence, including tools with missing annotations.
 Annotations are claims made by the server. They cannot prove that its remote
 implementation is read-only; the owner still chooses which endpoint to trust.
 
-Descriptions are untrusted data. Before entering a capability or model menu they
+Descriptions are untrusted data. Unicode format characters are removed first.
+Before entering a capability or model menu they
 are capped, escaped and enclosed in an `untrusted-mcp` fence. Server titles and
 schema descriptions never become trusted instructions. Input schemas support a
 bounded subset of JSON Schema for objects, arrays, primitives and enums. Unsupported

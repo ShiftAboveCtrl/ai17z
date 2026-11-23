@@ -1,3 +1,4 @@
+import type { Queryable } from '../pool';
 import { query } from '../pool';
 
 /**
@@ -87,6 +88,22 @@ export async function setConfig(input: {
     [input.agentId, input.capabilityId, input.permission, JSON.stringify(input.config ?? {})],
   );
   return rows[0] ?? null;
+}
+
+/**
+ * Writes DISABLED for every agent that already has a row for these capabilities.
+ *
+ * An MCP refresh that changes a tool's read hint or input schema keeps the
+ * same capability id. Deleting the row would fall back to the capability
+ * default, and a read defaults to allowed, so the owner must see DISABLED
+ * and enable the tool again. Callers inside `withTransaction` pass `tx`.
+ */
+export async function disableForCapabilities(capabilityIds: string[], tx?: Queryable): Promise<void> {
+  if (!capabilityIds.length) return;
+  const sql = `UPDATE agent_capability_permissions SET permission = 'DISABLED', updated_at = now()
+      WHERE capability_id = ANY($1::text[])`;
+  if (tx) await tx.query(sql, [capabilityIds]);
+  else await query(sql, [capabilityIds]);
 }
 
 /** Forgets a decision, so the capability falls back to its own default. */

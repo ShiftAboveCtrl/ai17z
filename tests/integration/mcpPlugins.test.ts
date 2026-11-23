@@ -14,7 +14,7 @@ let mockAccountId: string | null = null;
 vi.mock('@xbam/upstream', async importOriginal => {
   const actual = await importOriginal<typeof import('@xbam/upstream')>();
   return { ...actual, safeFetch: async (url: string, options: Parameters<typeof actual.safeFetch>[1]) => {
-    expect(url).toBe('https://mcp.example.test/mcp');
+    expect(['https://mcp.example.test/mcp', 'https://other.example.test/mcp']).toContain(url);
     expect(options.noRedirects).toBe(true);
     expect(options.maxBytes).toBe(512 * 1024);
     const response = await actual.safeFetch(peer.url, { ...options, allowPrivate: true });
@@ -175,6 +175,48 @@ it('rolls back the snapshot and registration if saving a credential fails', asyn
   expect((await plugins.getInstalledPlugin('test-mcp'))?.manifestSha256).toBe(before.manifestSha256);
   expect(getCapability('plugin_test_mcp.read_tide')).toBeNull();
   expect((await invoke(f.agentId)).outcome).toBe('SUCCEEDED');
+});
+
+it('resets a grant when a refused tool becomes readable or its schema changes', async () => {
+  peer.state.tools[0] = { ...readTool, annotations: {} };
+  const f = await attach();
+  await setPluginEnabled({ agentId: f.agentId, pluginId: 'test-mcp', enabled: true });
+  expect((await capabilityPermissions.listForAgent(f.agentId)).find(p => p.capability_id === id)?.permission).toBe('ALLOWED');
+  const manifest = (await plugins.getInstalledPlugin('test-mcp'))!.manifest;
+  peer.state.tools[0] = readTool;
+  const refresh = { raw: JSON.stringify(manifest), source: 'LOCAL' as const, mcpAgentId: f.agentId, acknowledgeExpansion: true };
+  expect((await installPlugin(refresh)).ok).toBe(true);
+  expect((await capabilityPermissions.listForAgent(f.agentId)).find(p => p.capability_id === id)?.permission).toBe('DISABLED');
+  const afterHint = (await plugins.getInstalledPlugin('test-mcp'))!.manifest;
+  await capabilityPermissions.set({ agentId: f.agentId, capabilityId: id, permission: 'ALLOWED' });
+  peer.state.tools[0] = { ...readTool, inputSchema: { ...readTool.inputSchema, required: [] } };
+  expect((await installPlugin({ ...refresh, raw: JSON.stringify(afterHint) })).ok).toBe(true);
+  expect((await capabilityPermissions.listForAgent(f.agentId)).find(p => p.capability_id === id)?.permission).toBe('DISABLED');
+});
+
+it('deletes every sealed credential when the endpoint host changes', async () => {
+  const f = await attach();
+  const other = await createFixture();
+  await plugins.setPluginSecret(other.agentId, 'test-mcp', 'api_key', 'other-mcp-key');
+  const before = (await plugins.getInstalledPlugin('test-mcp'))!;
+  const changed = { ...before.manifest, mcp: { ...before.manifest.mcp!, url: 'https://other.example.test/mcp' } };
+  const done = await installPlugin({ raw: JSON.stringify(changed), source: 'LOCAL', mcpAgentId: f.agentId, acknowledgeExpansion: true });
+  expect(done.ok, done.ok ? '' : done.why).toBe(true);
+  expect(await plugins.getDecryptedPluginSecret(f.agentId, 'test-mcp', 'api_key')).toBeNull();
+  expect(await plugins.getDecryptedPluginSecret(other.agentId, 'test-mcp', 'api_key')).toBeNull();
+});
+
+it('refuses a worker holding a snapshot whose hint or schema is no longer installed', async () => {
+  const f = await attach();
+  const stale = getCapability(id)!;
+  peer.state.tools[0] = { ...readTool, annotations: {} };
+  const manifest = (await plugins.getInstalledPlugin('test-mcp'))!.manifest;
+  expect((await installPlugin({ raw: JSON.stringify(manifest), source: 'LOCAL', mcpAgentId: f.agentId, acknowledgeExpansion: true })).ok).toBe(true);
+  expect(await stale.readiness!(context(f.agentId))).toMatchObject({ status: 'UNAVAILABLE' });
+  peer.state.tools[0] = { ...readTool, inputSchema: { ...readTool.inputSchema, required: [] } };
+  const afterHint = (await plugins.getInstalledPlugin('test-mcp'))!.manifest;
+  expect((await installPlugin({ raw: JSON.stringify(afterHint), source: 'LOCAL', mcpAgentId: f.agentId, acknowledgeExpansion: true })).ok).toBe(true);
+  expect(await stale.readiness!(context(f.agentId))).toMatchObject({ status: 'UNAVAILABLE' });
 });
 
 it('asks again when a refused tool becomes readable or its input footprint changes', async () => {

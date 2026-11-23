@@ -1,5 +1,6 @@
 import { openSecret, sealSecret } from '@xbam/shared';
 import type { InstalledPlugin, PluginManifest, PluginSource } from '@xbam/shared/contracts';
+import * as capabilityPermissions from './capabilityPermissions';
 import { query, withTransaction } from '../pool';
 
 /**
@@ -73,6 +74,13 @@ export async function putInstalledPlugin(input: {
   secret?: { agentId: string; key: string; value: string };
   /** New and removed MCP tools cannot inherit a stale grant on any agent. */
   resetCapabilityIds?: string[];
+  /**
+   * Tools whose read hint or input schema changed. Existing rows become
+   * DISABLED in this same transaction, so a refused tool cannot keep a grant.
+   */
+  disableCapabilityIds?: string[];
+  /** A changed endpoint host drops every agent's sealed credential for this Plugin. */
+  clearSecrets?: boolean;
 }): Promise<void> {
   await withTransaction(async tx => {
     await tx.query(
@@ -98,6 +106,12 @@ export async function putInstalledPlugin(input: {
     }
     if (input.resetCapabilityIds?.length) {
       await tx.query('DELETE FROM agent_capability_permissions WHERE capability_id = ANY($1::text[])', [input.resetCapabilityIds]);
+    }
+    if (input.disableCapabilityIds?.length) {
+      await capabilityPermissions.disableForCapabilities(input.disableCapabilityIds, tx);
+    }
+    if (input.clearSecrets) {
+      await tx.query('DELETE FROM agent_plugin_secrets WHERE plugin_id = $1', [input.id]);
     }
   });
 }

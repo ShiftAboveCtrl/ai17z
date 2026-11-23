@@ -21,6 +21,7 @@ import {
 import type {
   CapabilityPermission,
   InstalledPlugin,
+  PluginMcpTool,
   PluginState,
   PluginView,
   PluginCapabilityView,
@@ -37,7 +38,12 @@ import type { AnyCapability } from '@xbam/tools';
 import { capabilitiesOf } from './pluginCapabilities';
 import { capabilityViews } from './capabilityViews';
 import { atLeastDefault, setToolpack } from './toolpackViews';
-import { McpClient } from './mcpClient';
+import { mcpSchemaHash, McpClient } from './mcpClient';
+
+/** A flipped read hint or a different input schema is a new grant, not the old one. */
+function mcpToolChanged(before: PluginMcpTool, after: PluginMcpTool): boolean {
+  return before.readOnlyHint !== after.readOnlyHint || mcpSchemaHash(before.inputSchema) !== mcpSchemaHash(after.inputSchema);
+}
 
 /**
  * Plugins, as the owner's product over the capability system.
@@ -626,12 +632,20 @@ export async function installPlugin(input: {
       manifestSha256: manifestDigest(manifest.mcp ? JSON.stringify(manifest) : input.raw),
       manifest,
       requiresEntitlement: input.source === 'AI17Z_REGISTRY' && input.requiresEntitlement === true,
-      ...(manifest.mcp ? { resetCapabilityIds: [
-        ...manifest.mcp.tools.filter(tool => !already?.manifest.mcp?.tools.some(old => old.name === tool.name))
-          .map(tool => pluginCapabilityId(manifest.id, tool.name)),
-        ...(already?.manifest.mcp?.tools.filter(tool => !manifest.mcp!.tools.some(now => now.name === tool.name))
-          .map(tool => pluginCapabilityId(manifest.id, tool.name)) ?? []),
-      ] } : {}),
+      ...(manifest.mcp ? {
+        resetCapabilityIds: [
+          ...manifest.mcp.tools.filter(tool => !already?.manifest.mcp?.tools.some(old => old.name === tool.name))
+            .map(tool => pluginCapabilityId(manifest.id, tool.name)),
+          ...(already?.manifest.mcp?.tools.filter(tool => !manifest.mcp!.tools.some(now => now.name === tool.name))
+            .map(tool => pluginCapabilityId(manifest.id, tool.name)) ?? []),
+        ],
+        // A flipped hint or a changed schema must not keep an earlier ALLOWED row.
+        disableCapabilityIds: manifest.mcp.tools.filter(tool => {
+          const old = already?.manifest.mcp?.tools.find(entry => entry.name === tool.name);
+          return old !== undefined && mcpToolChanged(old, tool);
+        }).map(tool => pluginCapabilityId(manifest.id, tool.name)),
+        clearSecrets: Boolean(already?.manifest.mcp && new URL(already.manifest.mcp.url).host !== new URL(manifest.mcp.url).host),
+      } : {}),
       ...(manifest.mcp?.credentialKey && input.mcpAgentId && input.mcpCredential !== undefined
         ? { secret: { agentId: input.mcpAgentId, key: manifest.mcp.credentialKey, value: input.mcpCredential } } : {}),
     });

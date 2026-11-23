@@ -3,7 +3,7 @@ import { plugins } from '@xbam/database';
 import { pluginCapabilityId } from '@xbam/shared';
 import type { InstalledPlugin, PluginMcpTool } from '@xbam/shared/contracts';
 import { defineCapability, type AnyCapability } from '@xbam/tools';
-import { fenceMcpText, McpClient } from './mcpClient';
+import { fenceMcpText, mcpSchemaHash, McpClient } from './mcpClient';
 
 /** A bounded data-only JSON Schema subset. No refs, regexes or executable compilation. */
 export function mcpInputSchema(raw: Record<string, unknown>, depth = 0): z.ZodType {
@@ -81,7 +81,10 @@ export function mcpCapability(installed: Pick<InstalledPlugin, 'id' | 'manifest'
     async readiness(ctx) {
       if (refusal) return { status: 'UNAVAILABLE', why: refusal };
       const current = await plugins.getInstalledPlugin(installed.id);
-      if (!current?.manifest.mcp?.tools.some(entry => entry.name === tool.name) || current.manifest.mcp.url !== mcp.url) {
+      const currentTool = current?.manifest.mcp?.tools.find(entry => entry.name === tool.name);
+      if (!current?.manifest.mcp || !currentTool || current.manifest.mcp.url !== mcp.url
+        || currentTool.readOnlyHint !== tool.readOnlyHint
+        || mcpSchemaHash(currentTool.inputSchema) !== mcpSchemaHash(tool.inputSchema)) {
         return { status: 'UNAVAILABLE', why: 'This MCP tool snapshot is not currently installed.' };
       }
       const config = await plugins.getPluginConfig(ctx.agentId, installed.id);

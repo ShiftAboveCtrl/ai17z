@@ -44,6 +44,12 @@ it('caps and fences server text without allowing a closing delimiter', () => {
   expect(fenced.length).toBeLessThan(1500);
 });
 
+it('strips Unicode format characters before fencing', () => {
+  const fenced = fenceMcpText('read\u200Bweather\u202Eforecast\u{E0041}');
+  expect(fenced).toContain('readweatherforecast');
+  expect(fenced).not.toMatch(/\p{Cf}/u);
+});
+
 it('discovers paginated tools and rejects duplicate or repeated pages', async () => {
   const c = await client(); peer!.state.paginated = true;
   peer!.state.tools.push({ ...peer!.state.tools[0], name: 'Get.Tide-data' });
