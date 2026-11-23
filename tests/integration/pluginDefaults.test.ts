@@ -1,24 +1,18 @@
 import type { FastifyInstance } from 'fastify';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildServer } from '../../apps/api/src/server';
-import { capabilityPermissions as permissionsRepo } from '@xbam/database';
-import { CORE_RECOMMENDED_PACKS, applyCoreRecommended } from '@xbam/runtime';
+import { agents, capabilityPermissions as permissionsRepo, capabilityInvocations, observability, providers } from '@xbam/database';
+import { CORE_RECOMMENDED_PACKS, applyCoreRecommended, bootstrapRuntime, ingestNormalizedEvent } from '@xbam/runtime';
 import { defaultPermission } from '@xbam/shared/contracts';
 import {
   TOOLPACKS,
   capabilitiesInPack,
   listCapabilities,
-  registerBuiltinCapabilities,
   resetCapabilitiesForTest,
 } from '@xbam/tools';
-import {
-  registerChainCapabilities,
-  registerFeedCapabilities,
-  registerReferenceCapabilities,
-  registerWebHistoryCapabilities,
-} from '@xbam/runtime';
-import { installHarness } from '../support/harness';
+import { installHarness, mockEvent } from '../support/harness';
 import { createFixture } from '../support/fixtures';
+import { drainAgentJobs } from '../support/runner';
 
 installHarness();
 
@@ -40,6 +34,9 @@ installHarness();
 let app: FastifyInstance;
 
 beforeAll(async () => {
+  resetCapabilitiesForTest();
+  // Use the shipped catalogue so new families cannot silently widen defaults.
+  await bootstrapRuntime();
   app = await buildServer();
   await app.ready();
 });
@@ -58,18 +55,64 @@ async function signIn(email: string): Promise<{ authorization: string }> {
   return { authorization: `Bearer ${body.data.token}` };
 }
 
-beforeEach(() => {
-  resetCapabilitiesForTest();
-  registerBuiltinCapabilities();
-  // Enough families for the recommended set and one that is deliberately not
-  // in it, so "switched this on and nothing else" is a claim with two sides.
-  registerReferenceCapabilities();
-  registerWebHistoryCapabilities();
-  registerFeedCapabilities();
-  registerChainCapabilities();
-});
-
 describe('creating an agent through the product', () => {
+  it.each([undefined, {}, { tools: { allowed: [] } }])('enables the capability loop for a newly created agent with policy %j', async (policy) => {
+    const fixture = await createFixture();
+    const headers = await signIn(fixture.ownerEmail);
+    const created = await app.inject({
+      method: 'POST', url: '/api/agents', headers, payload: { name: 'Ready to look up', policy },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+    const { data } = created.json() as { data: { id: string } };
+    expect((await agents.getActivePolicy(data.id))?.config.tools.capabilityLoop).toBe(true);
+    // Creating another agent must not rewrite the existing agent's policy.
+    expect((await agents.getActivePolicy(fixture.agentId))?.config.tools.capabilityLoop).toBe(false);
+  });
+
+  it('preserves an explicitly supplied capability loop decision', async () => {
+    const fixture = await createFixture();
+    const headers = await signIn(fixture.ownerEmail);
+    const existing = await agents.getActivePolicy(fixture.agentId);
+    const created = await app.inject({
+      method: 'POST', url: '/api/agents', headers,
+      payload: { name: 'Loop off', policy: existing!.config },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+    const { data } = created.json() as { data: { id: string } };
+    expect((await agents.getActivePolicy(data.id))?.config).toEqual(existing!.config);
+  });
+
+  it('uses the clock out of the box and records its menu, while offering nothing for banter', async () => {
+    const fixture = await createFixture();
+    const headers = await signIn(fixture.ownerEmail);
+    const existing = await agents.getActivePolicy(fixture.agentId);
+    const created = await app.inject({
+      method: 'POST', url: '/api/agents', headers,
+      payload: { name: 'Clock reader', policy: { engagement: existing!.config.engagement, rate: existing!.config.rate } },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+    const { data } = created.json() as { data: { id: string } };
+    // Both tasks use the persisted creation policy without enabling any tools.
+    for (const [text, model, offered] of [
+      ['What is the current time in Tokyo?', 'mock-uses:time.now', ['time.now']],
+      ['gm', 'mock-fixed:gm', []],
+    ] as const) {
+      await providers.setModelConfig({
+        agentId: data.id, role: 'primary', providerCredentialId: fixture.providerId, model, parameters: {},
+      });
+      const outcome = await ingestNormalizedEvent({
+        accountId: null, onlyAgentId: data.id, event: mockEvent(text),
+      });
+      expect(outcome.jobs).toHaveLength(1);
+      await drainAgentJobs(data.id);
+      const trace = await observability.listTrace(outcome.jobs[0]!.job.id);
+      expect(trace.find((event) => event.type === 'CAPABILITY_OFFERED')?.data.offered).toEqual(offered);
+    }
+    expect((await capabilityInvocations.listForAgent(data.id)).map((row) => ({
+      id: row.capabilityId, outcome: row.outcome,
+    }))).toEqual([{ id: 'time.now', outcome: 'SUCCEEDED' }]);
+  });
+
   it('writes the recommended decisions, explicitly', async () => {
     const fixture = await createFixture();
     const headers = await signIn(fixture.ownerEmail);
@@ -122,7 +165,7 @@ describe('creating an agent through the product', () => {
     }
   });
 
-  it('switches nothing on that writes', async () => {
+  it('enables exactly the read-only starting set and disables every write', async () => {
     const fixture = await createFixture();
     const headers = await signIn(fixture.ownerEmail);
     const created = await app.inject({
@@ -134,10 +177,21 @@ describe('creating an agent through the product', () => {
     const { data } = created.json() as { data: { id: string } };
     const rows = await permissionsRepo.listForAgent(data.id);
 
+    expect(rows.filter((row) => row.permission !== 'DISABLED').map((row) => row.capability_id).sort()).toEqual([
+      'agent.cannot_change', 'agent.current_goals', 'agent.diagnostics', 'agent.explain_action', 'agent.explain_belief',
+      'agent.explain_silence', 'agent.growth_summary', 'agent.health_report', 'agent.learning_status',
+      'agent.memory', 'agent.my_changes', 'agent.owner_decisions', 'agent.recent_activity',
+      'agent.recent_changes', 'agent.recent_reflections', 'agent.relationship_summary', 'agent.self_state',
+      'entity.facts', 'entity.relationships', 'entity.resolve', 'feed.read', 'memory.search', 'reference.look_up',
+      'research.paper_lookup', 'research.paper_search', 'social.coordination_signals', 'social.narrative_genesis',
+      'social.public_profile', 'social.relationship_graph', 'time.now', 'web.history', 'web.history_capture', 'web.read_page',
+    ]);
+
+    expect(listCapabilities().some((capability) => capability.effect === 'WRITE')).toBe(true);
     for (const capability of listCapabilities()) {
       if (capability.effect !== 'WRITE') continue;
       const permission = rows.find((row) => row.capability_id === capability.id)?.permission;
-      expect(permission, capability.id).not.toBe('ALLOWED');
+      expect(permission, capability.id).toBe('DISABLED');
     }
   });
 

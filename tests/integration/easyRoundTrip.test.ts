@@ -62,6 +62,22 @@ async function loadEasy(agentId: string) {
 }
 
 describe('saving from Easy Mode and reading it back', () => {
+  it.each([false, true])('preserves capabilityLoop=%s across Easy Mode saves', async (capabilityLoop) => {
+    const fixture = await createFixture();
+    const existing = await agents.getActivePolicy(fixture.agentId);
+    await agents.savePolicyVersion(fixture.agentId, {
+      ...existing!.config,
+      tools: { ...existing!.config.tools, capabilityLoop },
+    }, 'Owner tool decision', fixture.ownerId);
+
+    await saveEasy(fixture.agentId, fixture.ownerId);
+    const first = await agents.getActivePolicy(fixture.agentId);
+    expect(first!.config.tools.capabilityLoop).toBe(capabilityLoop);
+    const view = await loadEasy(fixture.agentId);
+    await saveEasy(fixture.agentId, fixture.ownerId, view.setup);
+    expect((await agents.getActivePolicy(fixture.agentId))!.config).toEqual(first!.config);
+  });
+
   it('produces the same answers after a database round trip', async () => {
     const fixture = await createFixture();
     await saveEasy(fixture.agentId, fixture.ownerId);

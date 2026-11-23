@@ -318,6 +318,11 @@ is not carrying.
 
 ## New-agent defaults
 
+The agent creation route defaults `policy.tools.capabilityLoop` to true while
+preserving an explicit owner choice, and recommended capabilities are enabled
+only when their effect is READ; every WRITE starts DISABLED.
+Stored policies, imports and Easy Mode saves retain their existing loop setting.
+
 `applyCoreRecommended` is called once, from the one route that creates an agent.
 It writes explicit permissions rather than relying on each capability's default,
 so what the Plugins screen shows on day one is what the runtime will do, and so
