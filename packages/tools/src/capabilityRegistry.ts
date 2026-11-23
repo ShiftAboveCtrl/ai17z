@@ -18,7 +18,7 @@ const CAPABILITIES = new Map<string, AnyCapability>();
 const ID_SHAPE = /^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/;
 
 export function registerCapability<I, O>(capability: Capability<I, O>): void {
-  if (!ID_SHAPE.test(capability.id)) {
+  if (!ID_SHAPE.test(capability.id) && !/^plugin_[a-z][a-z0-9_]*\.[A-Za-z0-9_.-]{1,128}$/.test(capability.id)) {
     throw new Error(`Capability id "${capability.id}" must look like family.verb_noun.`);
   }
   const existing = CAPABILITIES.get(capability.id);

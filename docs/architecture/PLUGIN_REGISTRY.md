@@ -12,6 +12,11 @@ the code.
 A Plugin is the unit an owner installs, enables, configures and trusts. It owns
 no execution of its own.
 
+An owner-configured external MCP server is also one installed `LOCAL` Plugin,
+with kind `MCP_SERVER`. Its saved tool snapshot contributes capabilities through
+the same machinery. See [MCP_PLUGINS.md](MCP_PLUGINS.md) for attachment, refresh,
+the Streamable HTTP protocol and the read-only boundary.
+
 Everything an agent can actually do is a **capability**: a typed input, a typed
 output, a permission, a readiness answer and an audit row, invoked through
 `invokeCapability` and nothing else. That is unchanged by Plugins and must stay
@@ -111,9 +116,10 @@ properties, not relaxing this.
 
 ### Capability ids
 
-`pluginCapabilityId` produces `plugin_<id>.<name>`: two segments, because the
-registry's ids are `family.verb_noun` and the family is what the shortlister
-groups by. Giving each Plugin its own family is the point, so a Plugin's
+`pluginCapabilityId` produces `plugin_<id>.<name>`. Declarative names form two
+segments; MCP names are preserved and may themselves contain dots. The first
+segment is always the family the shortlister groups by. Giving each Plugin its
+own family is the point, so a Plugin's
 capabilities are offered or not offered together.
 
 `plugin_` is reserved, so an installed Plugin can never claim `x.`, `time.`,

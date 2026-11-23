@@ -10,6 +10,7 @@ import { defineCapability, registerCapability, resetCapabilitiesForTest } from '
 import { setPauseAll, wakeAgent } from '@xbam/runtime';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
+import { pursueGoal } from '../../packages/runtime/src/goalPlans';
 
 installHarness();
 let runs = 0;
@@ -177,8 +178,8 @@ describe('a goal becomes a bounded plan on a worker wake', () => {
     }));
     await wakeAgent(f.agentId, { mayResearch: true });
     expect(runs).toBe(0);
-    expect(await planFor(f.agentId)).toMatchObject({ state: 'STOPPED', steps: [{ outcome: 'REFUSED' }] });
-    expect((await capabilityInvocations.listForAgent(f.agentId))[0]!.detail).toMatch(/switched off/);
+    expect(await planFor(f.agentId)).toMatchObject({ state: 'EXHAUSTED', steps: [] });
+    expect(await capabilityInvocations.listForAgent(f.agentId)).toEqual([]);
   });
 
   it('an approval requirement stops the plan for the owner', async () => {
@@ -229,5 +230,20 @@ describe('a goal becomes a bounded plan on a worker wake', () => {
     expect(await planFor(f.agentId)).toMatchObject({ state: 'STOPPED', summary: expect.stringMatching(/interrupted/) });
     await wakeAgent(f.agentId, { mayResearch: true });
     expect(runs).toBe(0);
+  });
+
+  it('leaves a goal unclaimed when a pre-claim wake read fails', async () => {
+    const f = await planningAgent();
+    vi.spyOn(mind, 'getWake').mockRejectedValueOnce(new Error('read unavailable'));
+    expect(await pursueGoal(f.agentId, null)).toBeNull();
+    expect(await planFor(f.agentId)).toBeNull();
+    expect(runs).toBe(0);
+  });
+
+  it('leaves a goal unclaimed when the pre-claim goal read fails', async () => {
+    const f = await planningAgent();
+    vi.spyOn(mind, 'listGoals').mockRejectedValueOnce(new Error('read unavailable'));
+    expect(await pursueGoal(f.agentId, null)).toBeNull();
+    expect(await planFor(f.agentId)).toBeNull();
   });
 });

@@ -38,6 +38,19 @@ const context = {
 
 const allowed = { stored: null, paused: false };
 
+it('bounds readiness by the remaining plan budget', async () => {
+  vi.useFakeTimers();
+  try {
+    const run = vi.fn();
+    registerCapability(echo('test.slow_ready', { readiness: () => new Promise(() => {}), run }));
+    const pending = invokeCapability({ call: { id: 'test.slow_ready', input: { word: 'hi' } },
+      context, permission: allowed, budgetMs: 20 });
+    await vi.advanceTimersByTimeAsync(21);
+    expect(await Promise.race([pending, Promise.resolve('still waiting')])).toMatchObject({ outcome: 'TIMED_OUT' });
+    expect(run).not.toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
+});
+
 function echo(id: string, overrides: Partial<Parameters<typeof defineCapability>[0]> = {}) {
   return defineCapability({
     id,
@@ -229,16 +242,37 @@ describe('what may run', () => {
   });
 
   it('abandons a running capability at the shorter plan deadline', async () => {
-    registerCapability(echo('test.plan_timeout', {
-      timeoutMs: 5000,
-      async run() { return new Promise<never>(() => { /* Intentionally never settles. */ }); },
-    }));
-    const started = Date.now();
-    const result = await invokeCapability({
-      call: { id: 'test.plan_timeout', input: { word: 'hi' } }, context, permission: allowed, budgetMs: 20,
-    });
-    expect(result.outcome).toBe('TIMED_OUT');
-    expect(Date.now() - started).toBeLessThan(2000);
+    vi.useFakeTimers();
+    try {
+      registerCapability(echo('test.plan_timeout', {
+        timeoutMs: 5000,
+        async run() { return new Promise<never>(() => { /* Intentionally never settles. */ }); },
+      }));
+      const started = Date.now();
+      const pending = invokeCapability({
+        call: { id: 'test.plan_timeout', input: { word: 'hi' } }, context, permission: allowed, budgetMs: 20,
+      });
+      await vi.advanceTimersByTimeAsync(21);
+      const result = await pending;
+      expect(result.outcome).toBe('TIMED_OUT');
+      expect(Date.now() - started).toBeLessThan(2000);
+      expect(Number(/longer than (\d+)ms/.exec(result.detail)?.[1])).toBeLessThanOrEqual(20);
+      expect(result.detail).not.toContain('5000ms');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('reports the capped timeout when run rejects synchronously on abort', async () => {
+    vi.useFakeTimers();
+    try {
+      registerCapability(echo('test.abort_rejection', { timeoutMs: 5000,
+        run: (_input, ctx) => new Promise((_resolve, reject) => {
+          ctx.signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
+        }) }));
+      const pending = invokeCapability({ call: { id: 'test.abort_rejection', input: { word: 'hi' } },
+        context, permission: allowed, budgetMs: 20 });
+      await vi.advanceTimersByTimeAsync(21);
+      expect(await pending).toMatchObject({ outcome: 'TIMED_OUT', detail: 'Echo took longer than 20ms and was abandoned.' });
+    } finally { vi.useRealTimers(); }
   });
 });
 

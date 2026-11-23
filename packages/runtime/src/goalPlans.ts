@@ -1,6 +1,7 @@
 import { agents, deliberation as mind, observability } from '@xbam/database';
 import { generate, resolveTargets } from '@xbam/models';
 import { autonomyAtLeast, type GoalPlan } from '@xbam/shared/contracts';
+import { createLogger } from '@xbam/shared';
 import { capabilitySettings } from './capabilityPermissions';
 import { runCapabilityLoop } from './capabilityLoop';
 import { chargeGrowthSession, growthGateFor, policyFor } from './growthGate';
@@ -12,17 +13,25 @@ const GOAL_PLAN_MAX_STEPS = 3;
 // A minute leaves room for normal reads while yielding to the next wake.
 // The existing loop checks elapsed time; there is no plan timer or scheduler.
 const GOAL_PLAN_BUDGET_MS = 60_000;
+const log = createLogger('goal-plans');
 
 /** One goal, one bounded attempt. The owner still decides goal progress. */
 export async function pursueGoal(agentId: string, accountId: string | null): Promise<string | null> {
-  const agent = await agents.getAgent(agentId);
-  const wake = await mind.getWake(agentId);
+  const unavailable = () => {
+    log.warn('goal planning pre-claim read was unavailable', { agentId });
+    return null;
+  };
+  const agent = await agents.getAgent(agentId).catch(unavailable);
+  const wake = await mind.getWake(agentId).catch(unavailable);
   if (!agent || !wake?.enabled || !autonomyAtLeast(wake.autonomy, 'THINK')) return null;
-  const policy = await policyFor(agent);
-  if (!policy.tools.capabilityLoop || (await pauseState()).paused) return null;
-  if ((await resolveTargets(agentId, 'classifier')).length === 0) return null;
+  const policy = await policyFor(agent).catch(unavailable);
+  const paused = await pauseState().catch(unavailable);
+  if (!policy?.tools.capabilityLoop || !paused || paused.paused) return null;
+  const targets = await resolveTargets(agentId, 'classifier').catch(unavailable);
+  if (!targets?.length) return null;
 
-  const goals = await mind.listGoals(agentId, { status: 'ACTIVE' });
+  const goals = await mind.listGoals(agentId, { status: 'ACTIVE' }).catch(unavailable);
+  if (!goals) return null;
   // A process that stopped after a committed claim cannot safely replay a
   // write. Record the interrupted attempt after its budget, then leave it ended.
   for (const goal of goals) {

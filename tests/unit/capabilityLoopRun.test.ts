@@ -104,16 +104,30 @@ describe('the capability loop', () => {
     expect(secondMessages.some((m) => m.content.includes('noon'))).toBe(true);
   });
 
-  it('records every step, including one it refused', async () => {
+  it('treats an unknown capability as a malformed turn without invoking or proposing it', async () => {
     const generate = vi
       .fn()
       .mockResolvedValueOnce(call('test.invented'))
       .mockResolvedValueOnce('I could not look that up.');
     const result = await runCapabilityLoop({ ...base, generate });
 
-    expect(result.steps[0]).toMatchObject({ outcome: 'REFUSED' });
-    // A refusal is exactly the thing an owner wants to see afterwards.
-    expect(recorded).toEqual([{ capabilityId: 'test.invented', outcome: 'REFUSED', step: 1 }]);
+    expect(result.steps).toEqual([]);
+    expect(recorded).toEqual([]);
+    expect(generate.mock.calls[1]![0].some((m: { content: string }) => m.content.includes('not offered'))).toBe(true);
+  });
+
+  it('exhausts the step budget when the final turn is malformed', async () => {
+    const result = await runCapabilityLoop({ ...base, maxSteps: 1,
+      generate: vi.fn().mockResolvedValueOnce(`${CALL_OPEN}bad${CALL_CLOSE}`).mockResolvedValueOnce('Stopped.') });
+    expect(result.exhausted).toBe(true);
+    expect(result.steps).toEqual([]);
+  });
+
+  it('does not invoke a registered capability that was not offered', async () => {
+    const result = await runCapabilityLoop({ ...base, permissions: new Map([['test.settings', 'DISABLED' as const]]),
+      generate: vi.fn().mockResolvedValueOnce(call('test.settings')).mockResolvedValueOnce('Stopped.') });
+    expect(result.steps).toEqual([]);
+    expect(recorded).toEqual([]);
   });
 
   it('tells the model plainly when its call was malformed', async () => {
@@ -226,9 +240,7 @@ describe('the menu the model is shown', () => {
     expect(generate.mock.calls[0]![0]).toHaveLength(1);
   });
 
-  it('refuses a disabled capability anyway if the model asks for one', async () => {
-    // Not offering it is a saving, not a security boundary. The permission
-    // check at invocation is the boundary and it still runs.
+  it('treats a disabled capability missing from the menu as a malformed turn', async () => {
     const generate = vi
       .fn()
       .mockResolvedValueOnce(call('test.clock'))
@@ -238,7 +250,8 @@ describe('the menu the model is shown', () => {
       generate,
       permissions: new Map([['test.clock', 'DISABLED' as const]]),
     });
-    expect(result.steps[0]!.outcome).toBe('REFUSED');
+    expect(result.steps).toEqual([]);
+    expect(recorded).toEqual([]);
   });
 });
 
@@ -253,6 +266,7 @@ describe('what a capability is configured with', () => {
       ...base,
       generate,
       configs: new Map([['test.settings', { maxResults: 5, language: 'en' }]]),
+      task: 'test.settings',
     });
 
     expect(result.steps[0]!.outcome).toBe('SUCCEEDED');
@@ -272,6 +286,7 @@ describe('what a capability is configured with', () => {
       ...base,
       generate,
       configs: new Map([['test.clock', { irrelevant: true }]]),
+      task: 'test.settings',
     });
 
     // Another capability's settings must never arrive here.

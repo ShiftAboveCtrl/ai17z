@@ -78,7 +78,22 @@ export async function invokeCapability(options: InvokeOptions): Promise<Invocati
     return done('REFUSED', `The input for ${capability.id} was wrong${where}: ${first?.message ?? 'invalid'}.`);
   }
 
-  const readiness = capability.readiness ? await capability.readiness(context).catch(() => undefined) : undefined;
+  let readiness: Awaited<ReturnType<NonNullable<typeof capability.readiness>>> | undefined;
+  if (capability.readiness) {
+    let readyTimer: ReturnType<typeof setTimeout> | undefined;
+    const readyBudget = options.budgetMs === undefined ? capability.timeoutMs
+      : Math.max(0, Math.min(capability.timeoutMs, options.budgetMs - (Date.now() - started)));
+    if (readyBudget <= 0) return done('TIMED_OUT', 'The plan time budget was exhausted before readiness could be checked.');
+    try {
+      const checked = await Promise.race([
+        Promise.resolve().then(() => capability.readiness!(context))
+          .catch(() => ({ status: 'UNAVAILABLE' as const, why: 'Readiness could not be checked.' })),
+        new Promise<typeof TIMEOUT>(resolve => { readyTimer = setTimeout(() => resolve(TIMEOUT), readyBudget); }),
+      ]);
+      if (checked === TIMEOUT) return done('TIMED_OUT', `Readiness took longer than ${readyBudget}ms and was abandoned.`);
+      readiness = checked;
+    } finally { clearTimeout(readyTimer); }
+  }
   const decision = resolvePermission({ ...options.permission, capability, readiness });
   if (!decision.allowed) {
     return done('REFUSED', decision.why, { input: parsedInput.data });
@@ -145,7 +160,7 @@ export async function invokeCapability(options: InvokeOptions): Promise<Invocati
     const message = error instanceof Error ? error.message : String(error);
     return done(
       aborted ? 'TIMED_OUT' : 'FAILED',
-      aborted ? `${capability.name} took longer than ${capability.timeoutMs}ms and was abandoned.` : message,
+      aborted ? `${capability.name} took longer than ${timeoutMs}ms and was abandoned.` : message,
       { input: parsedInput.data },
     );
   } finally {

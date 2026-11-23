@@ -15,6 +15,7 @@ import {
   footprintExpansion,
   pluginFootprint,
   pluginOfCapability,
+  pluginCapabilityId,
   pluginRuns,
 } from '@xbam/shared';
 import type {
@@ -36,6 +37,7 @@ import type { AnyCapability } from '@xbam/tools';
 import { capabilitiesOf } from './pluginCapabilities';
 import { capabilityViews } from './capabilityViews';
 import { atLeastDefault, setToolpack } from './toolpackViews';
+import { McpClient } from './mcpClient';
 
 /**
  * Plugins, as the owner's product over the capability system.
@@ -208,10 +210,10 @@ export async function pluginsAndCore(input: {
     }
 
     const hosts = record
-      ? [...new Set(record.manifest.capabilities.flatMap((declaration) => declaration.http.hosts))]
+      ? pluginFootprint(record.manifest).hosts
       : [];
     const quota = record
-      ? record.manifest.capabilities.reduce((most, declaration) => Math.max(most, declaration.http.quotaPerHour), 0) || null
+      ? pluginFootprint(record.manifest).quotaPerHour || null
       : null;
 
     let missingConfig: string[] = [];
@@ -485,6 +487,10 @@ export function readManifest(raw: string): { ok: true; manifest: PluginManifest 
 export async function installPlugin(input: {
   raw: string;
   source: 'LOCAL' | 'AI17Z_REGISTRY';
+  /** Owner agent whose sealed MCP credential is used during discovery. */
+  mcpAgentId?: string;
+  /** Transient input, sealed atomically with the installed snapshot. */
+  mcpCredential?: string;
   /** The registry listed it as needing an entitlement. Only a registry install can say so. */
   requiresEntitlement?: boolean;
   /** Set when replacing a Plugin already installed. */
@@ -534,6 +540,32 @@ export async function installPlugin(input: {
         ok: false,
         why: `${manifest.name} ${already.version} is installed and this copy is ${manifest.version}, which is older. It was not installed.`,
       };
+    }
+  }
+
+  if (manifest.mcp) {
+    // Discovery is install/refresh work. Never trust a caller's cached tool list.
+    const mcp = manifest.mcp;
+    if (input.source !== 'LOCAL') return { ok: false, why: 'An MCP endpoint must be configured directly by its owner.' };
+    if (input.mcpCredential !== undefined && (!input.mcpAgentId || !mcp.credentialKey)) {
+      return { ok: false, why: 'An MCP credential needs an owner agent and a declared secret slot.' };
+    }
+    if (already && !input.acknowledgeExpansion) {
+      // Configuration approval precedes discovery, which can carry an existing secret.
+      // Compare saved tools here; discovered tool growth is checked below.
+      const proposed = { ...manifest, mcp: { ...mcp, tools: already.manifest.mcp?.tools ?? [] } };
+      const grew = footprintExpansion(pluginFootprint(already.manifest), pluginFootprint(proposed));
+      if (grew.length) return { ok: false, why: 'This MCP configuration asks for more than the installed version.', needsAcknowledgement: grew };
+    }
+    try {
+      const credential = input.mcpCredential ?? (input.mcpAgentId && mcp.credentialKey
+        ? await pluginsRepo.getDecryptedPluginSecret(input.mcpAgentId, manifest.id, mcp.credentialKey) : undefined);
+      mcp.url = new URL(mcp.url).toString();
+      const client = new McpClient(mcp.url, AbortSignal.timeout(mcp.timeoutMs), credential ?? undefined);
+      await client.initialize();
+      mcp.tools = await client.listTools();
+    } catch {
+      return { ok: false, why: 'The MCP tool list could not be fetched or was not supported. The installed Plugin was left unchanged.' };
     }
   }
 
@@ -591,9 +623,17 @@ export async function installPlugin(input: {
       source: input.source,
       version: manifest.version,
       publisher: manifest.publisher,
-      manifestSha256: manifestDigest(input.raw),
+      manifestSha256: manifestDigest(manifest.mcp ? JSON.stringify(manifest) : input.raw),
       manifest,
       requiresEntitlement: input.source === 'AI17Z_REGISTRY' && input.requiresEntitlement === true,
+      ...(manifest.mcp ? { resetCapabilityIds: [
+        ...manifest.mcp.tools.filter(tool => !already?.manifest.mcp?.tools.some(old => old.name === tool.name))
+          .map(tool => pluginCapabilityId(manifest.id, tool.name)),
+        ...(already?.manifest.mcp?.tools.filter(tool => !manifest.mcp!.tools.some(now => now.name === tool.name))
+          .map(tool => pluginCapabilityId(manifest.id, tool.name)) ?? []),
+      ] } : {}),
+      ...(manifest.mcp?.credentialKey && input.mcpAgentId && input.mcpCredential !== undefined
+        ? { secret: { agentId: input.mcpAgentId, key: manifest.mcp.credentialKey, value: input.mcpCredential } } : {}),
     });
   } catch (error) {
     for (const id of registered) unregisterCapability(id);

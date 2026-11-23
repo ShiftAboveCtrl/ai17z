@@ -239,7 +239,11 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
     if (options.goalPlan && Date.now() >= deadline) { exhausted = true; break; }
 
     const raw = await options.generate(messages);
-    const turn = parseTurn(raw);
+    let turn = parseTurn(raw);
+    const chosenId = turn.kind === 'call' ? turn.call.id : null;
+    if (turn.kind === 'call' && !offered.some(capability => capability.id === chosenId)) {
+      turn = { kind: 'malformed', reason: 'That capability was not offered. Choose an id from the menu.', raw };
+    }
 
     // A slow model cannot spend the remaining budget and then start a remote
     // action. No extra final model call belongs to an exhausted goal plan.
@@ -265,6 +269,7 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
       // on the third attempt, and the budget is what stops that being infinite.
       messages.push({ role: 'assistant', content: raw });
       messages.push({ role: 'system', content: `That was not a usable capability call: ${turn.reason}` });
+      if (step === maxSteps) exhausted = true;
       continue;
     }
 

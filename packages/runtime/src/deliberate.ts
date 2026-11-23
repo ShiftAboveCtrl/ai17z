@@ -1065,7 +1065,10 @@ export async function wakeAgent(
   // Only the worker may drive capabilities. The owner's immediate wake owns
   // no browser, and OBSERVE never spends a planning model call.
   const goalPlan = options.mayResearch && autonomyAtLeast(wake.autonomy, 'THINK')
-    ? await pursueGoal(agentId, accountId) : null;
+    ? await pursueGoal(agentId, accountId).catch(() => {
+      log.warn('goal planning did not run', { agentId });
+      return null;
+    }) : null;
 
   const somethingHappened =
     attended > 0 || produced > 0 || candidates > 0 || resolvedCount > 0 || lookedInto !== null || engagements > 0 || goalPlan !== null;
