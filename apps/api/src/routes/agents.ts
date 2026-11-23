@@ -53,7 +53,10 @@ async function ownedAgent(agentId: string, user: UserRow) {
 
 const CreateAgentBody = CreateAgentInput.extend({
   persona: PersonaDraft.partial().optional(),
-  policy: PolicyConfig.partial().optional(),
+  policy: PolicyConfig.partial().extend({
+    // Keep omission distinguishable from an explicit owner decision here.
+    tools: PolicyConfig.shape.tools.unwrap().extend({ capabilityLoop: z.boolean().optional() }).optional(),
+  }).optional(),
 });
 
 export async function agentRoutes(app: FastifyInstance): Promise<void> {
@@ -86,9 +89,13 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
       // somebody asks why it is quiet, and a model guessing about
       // infrastructure invents a confident wrong answer. So a new agent is
       // permitted to read its own status -- but only when its owner supplied no
-      // policy, because a policy somebody wrote is a decision and is stored
-      // exactly as given.
-      const supplied = PolicyConfig.parse(input.policy ?? {});
+      // policy, because an explicit tool allowlist is the owner's decision.
+      // Creation alone opts into the read-only capability defaults. Shared
+      // policy parsing stays unchanged for stored policies, imports and Easy Mode.
+      const supplied = PolicyConfig.parse({
+        ...input.policy,
+        tools: { ...input.policy?.tools, capabilityLoop: input.policy?.tools?.capabilityLoop ?? true },
+      });
       const policy = input.policy
         ? supplied
         : { ...supplied, tools: { ...supplied.tools, allowed: [...supplied.tools.allowed, SELF_DIAGNOSTICS_TOOL] } };

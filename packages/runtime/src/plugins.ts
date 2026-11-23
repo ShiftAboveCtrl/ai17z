@@ -436,7 +436,7 @@ export async function applyCoreRecommended(agentId: string): Promise<void> {
   }
 
   for (const capability of listCapabilities()) {
-    const permission: CapabilityPermission = recommended.has(capability.id)
+    const permission: CapabilityPermission = recommended.has(capability.id) && capability.effect === 'READ'
       ? defaultPermission(capability.effect, capability.risk)
       : 'DISABLED';
     await permissionsRepo.set({ agentId, capabilityId: capability.id, permission });

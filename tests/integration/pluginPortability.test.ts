@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { capabilityPermissions as permissionsRepo, plugins as pluginsRepo } from '@xbam/database';
+import { agents, capabilityPermissions as permissionsRepo, plugins as pluginsRepo } from '@xbam/database';
 import {
   exportAgent,
   importAgent,
@@ -210,6 +210,17 @@ describe('importing it where the Plugin is not installed', () => {
 });
 
 describe('an imported agent keeps its own decisions', () => {
+  it.each([false, true])('preserves capabilityLoop=%s on import', async (capabilityLoop) => {
+    const source = await createFixture();
+    const existing = await agents.getActivePolicy(source.agentId);
+    await agents.savePolicyVersion(source.agentId, {
+      ...existing!.config, tools: { ...existing!.config.tools, capabilityLoop },
+    }, 'Owner tool decision', source.ownerId);
+    const document = await exportAgent(source.agentId);
+    const report = await importAgent({ ownerId: source.ownerId, document, name: 'Imported' });
+    expect((await agents.getActivePolicy(report.agentId))?.config.tools.capabilityLoop).toBe(capabilityLoop);
+  });
+
   it('is not given this installation’s recommended defaults on top', async () => {
     // The import path deliberately does not call `applyCoreRecommended`. If it
     // did, every capability the package did not mention would end up at this
