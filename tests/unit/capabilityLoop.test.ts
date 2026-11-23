@@ -210,6 +210,36 @@ describe('what may run', () => {
     });
     expect(result.outcome).toBe('TIMED_OUT');
   });
+
+  it('caps an invocation with the remaining plan time, including readiness', async () => {
+    let ran = false;
+    let now = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      registerCapability(echo('test.spent', {
+        async readiness() { now = 11; return { status: 'AVAILABLE' as const }; },
+        async run() { ran = true; return { word: 'late' }; },
+      }));
+      const result = await invokeCapability({
+        call: { id: 'test.spent', input: { word: 'hi' } }, context, permission: allowed, budgetMs: 10,
+      });
+      expect(result.outcome).toBe('TIMED_OUT');
+      expect(ran).toBe(false);
+    } finally { vi.restoreAllMocks(); }
+  });
+
+  it('abandons a running capability at the shorter plan deadline', async () => {
+    registerCapability(echo('test.plan_timeout', {
+      timeoutMs: 5000,
+      async run() { return new Promise<never>(() => { /* Intentionally never settles. */ }); },
+    }));
+    const started = Date.now();
+    const result = await invokeCapability({
+      call: { id: 'test.plan_timeout', input: { word: 'hi' } }, context, permission: allowed, budgetMs: 20,
+    });
+    expect(result.outcome).toBe('TIMED_OUT');
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
 });
 
 describe('the owner’s answer', () => {

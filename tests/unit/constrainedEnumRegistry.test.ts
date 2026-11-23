@@ -51,6 +51,16 @@ describe('which column a CHECK is about', () => {
     ).toBe('last_outcome');
   });
 
+  it('names a vocabulary kept inside a jsonb column by its path', () => {
+    // Migration 0145 constrains agent_goals.plan->>'state'. Before this it read
+    // as `?` and the registry test failed in CI.
+    expect(
+      columnOf(
+        `CHECK (((plan IS NULL) OR ((jsonb_typeof(plan) = 'object'::text) AND ((plan ->> 'state'::text) IS NOT NULL) AND ((plan ->> 'state'::text) = ANY (ARRAY['RUNNING'::text, 'COMPLETED'::text])))))`,
+      ),
+    ).toBe('plan->>state');
+  });
+
   it('refuses to name one column when a CHECK constrains two', () => {
     // Not one vocabulary, so recording it as one would register half of it.
     // `?` makes the registry test say so out loud instead.

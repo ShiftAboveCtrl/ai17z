@@ -29,6 +29,7 @@ import { processRadarReceipts } from './radarReceipts';
 import { processEvidenceFollowUps } from './evidenceFollowUp';
 import { requestDiscovery } from './discovery';
 import { learnFromOutcomes } from './learning';
+import { pursueGoal } from './goalPlans';
 import { worthNoticing } from './repoWatcher';
 import { reticenceReason, unpromptedSubject } from './reticence';
 import { worthEngaging } from './engagementWorth';
@@ -1061,8 +1062,13 @@ export async function wakeAgent(
     engagements = await formEngagements(agentId, observations);
   }
 
+  // Only the worker may drive capabilities. The owner's immediate wake owns
+  // no browser, and OBSERVE never spends a planning model call.
+  const goalPlan = options.mayResearch && autonomyAtLeast(wake.autonomy, 'THINK')
+    ? await pursueGoal(agentId, accountId) : null;
+
   const somethingHappened =
-    attended > 0 || produced > 0 || candidates > 0 || resolvedCount > 0 || lookedInto !== null || engagements > 0;
+    attended > 0 || produced > 0 || candidates > 0 || resolvedCount > 0 || lookedInto !== null || engagements > 0 || goalPlan !== null;
   const reason = somethingHappened
     ? [
         attended > 0 ? `${attended} worth noticing` : '',
@@ -1077,6 +1083,7 @@ export async function wakeAgent(
             ? `looked one up and found ${lookedInto.findings}`
             : 'looked one up and found nothing'
           : '',
+        goalPlan ?? '',
       ]
         .filter(Boolean)
         .join(', ')

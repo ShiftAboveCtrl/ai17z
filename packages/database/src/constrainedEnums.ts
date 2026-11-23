@@ -29,6 +29,7 @@ import {
   FOUNDRY_SECTIONS,
   GOAL_ORIGINS,
   GOAL_STATUSES,
+  GOAL_PLAN_STATES,
   IDENTITY_KINDS,
   INVOCATION_OUTCOMES,
   JOB_STATUSES,
@@ -122,6 +123,7 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
   { table: 'agent_attention', column: 'state', values: ATTENTION_STATES },
   { table: 'agent_goals', column: 'origin', values: GOAL_ORIGINS },
   { table: 'agent_goals', column: 'status', values: GOAL_STATUSES },
+  { table: 'agent_goals', column: 'plan->>state', values: GOAL_PLAN_STATES },
   { table: 'agent_reflections', column: 'kind', values: REFLECTION_KINDS },
   { table: 'agent_wake', column: 'autonomy', values: AUTONOMY_LEVELS },
   { table: 'agents', column: 'avatar_mode', values: AVATAR_MODES },
@@ -569,7 +571,11 @@ export interface DiscoveredConstraint {
  * loud rather than registering half of it.
  */
 export function columnOf(definition: string): string {
-  const named = [...definition.matchAll(/"?([a-z_][a-z0-9_]*)"?\s*=\s*ANY/g)].map((m) => m[1]!);
+  // A vocabulary kept inside a jsonb column renders as
+  // `((plan ->> 'state'::text) = ANY (...))`, and is named `plan->>state`.
+  const named = [
+    ...definition.matchAll(/\(\s*"?([a-z_][a-z0-9_]*)"?\s*->>\s*'([^']+)'::text\s*\)\s*=\s*ANY|"?([a-z_][a-z0-9_]*)"?\s*=\s*ANY/g),
+  ].map((m) => (m[3] ?? `${m[1]!}->>${m[2]!}`));
   if (named.length === 0) return '?';
   return named.every((name) => name === named[0]) ? named[0]! : '?';
 }
@@ -590,7 +596,9 @@ export async function discoverConstrainedEnums(
       column: columnOf(def),
       constraint: String(row.conname ?? ''),
       values: [
-        ...[...def.matchAll(/'([^']*)'::text/g)].map((m) => m[1]!),
+        // Only literals inside an ARRAY[...] are the vocabulary: a jsonb path
+        // CHECK also carries `'object'::text` and `'state'::text`, which are not.
+        ...[...def.matchAll(/ARRAY\[([^\]]*)\]/g)].flatMap((a) => [...a[1]!.matchAll(/'([^']*)'::text/g)].map((m) => m[1]!)),
         // `window_hours IN (1, 24)` renders as `= ANY (ARRAY[1, 24])`: no quotes,
         // so the text match above sees nothing and the vocabulary reads as empty.
         // Only elements inside an ARRAY[...] count, never a number elsewhere in

@@ -280,3 +280,54 @@ describe('what a capability is configured with', () => {
     expect(fedBack).not.toContain('irrelevant');
   });
 });
+
+describe('a goal plan uses the same loop with live gates', () => {
+  const checkpoint = () => Promise.resolve({
+    permissions: new Map(), configs: new Map(), paused: false,
+    autonomy: 'ACT' as const, enabled: true,
+  });
+
+  it('stops before invoking a call returned after the time budget', async () => {
+    let now = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      const result = await runCapabilityLoop({
+        ...base, budgetMs: 10,
+        generate: async () => { now = 11; return call('test.clock'); },
+        goalPlan: { checkpoint, onStep: async () => undefined },
+      });
+      expect(result.exhausted).toBe(true);
+      expect(result.steps).toHaveLength(0);
+      expect(recorded).toHaveLength(0);
+    } finally { vi.restoreAllMocks(); }
+  });
+
+  it('proposes at SUGGEST without executing or claiming a refused invocation', async () => {
+    const result = await runCapabilityLoop({
+      ...base, generate: async () => call('test.clock'),
+      goalPlan: {
+        checkpoint: async () => ({ ...await checkpoint(), autonomy: 'SUGGEST' }),
+        onStep: async () => undefined,
+      },
+    });
+    expect(result.halted).toBe('PROPOSED');
+    expect(result.steps).toMatchObject([{ outcome: 'PROPOSED' }]);
+    expect(recorded).toHaveLength(0);
+  });
+
+  it('refreshes a permission revoked while the model was generating', async () => {
+    let allowed = true;
+    const result = await runCapabilityLoop({
+      ...base, generate: async () => { allowed = false; return call('test.clock'); },
+      goalPlan: {
+        checkpoint: async () => ({
+          ...await checkpoint(), permissions: new Map([['test.clock', allowed ? 'ALLOWED' : 'DISABLED']]),
+        }),
+        onStep: async () => undefined,
+      },
+    });
+    expect(result.halted).toBe('STOPPED');
+    expect(result.steps).toMatchObject([{ outcome: 'REFUSED', output: null }]);
+    expect(recorded).toEqual([{ capabilityId: 'test.clock', outcome: 'REFUSED', step: 1 }]);
+  });
+});

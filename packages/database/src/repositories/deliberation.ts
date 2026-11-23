@@ -4,6 +4,7 @@ import type {
   AutonomyLevel,
   EvidenceRef,
   GoalOrigin,
+  GoalPlan,
   GoalStatus,
   ReflectionKind,
   SalienceFactor,
@@ -238,10 +239,26 @@ export interface GoalRow {
   createdAt: string;
   updatedAt: string;
   resolvedAt: string | null;
+  plan: GoalPlan | null;
 }
 
 const GOAL_COLUMNS = `id, agent_id, summary, reason, origin, pinned, priority, status, progress,
-  evidence, resolution, next_review_at, created_at, updated_at, resolved_at`;
+  evidence, resolution, next_review_at, created_at, updated_at, resolved_at, plan`;
+
+/** A committed claim prevents another wake from replaying the same goal. */
+export async function claimGoalPlan(id: string, plan: GoalPlan): Promise<boolean> {
+  const rows = await query(
+    `UPDATE agent_goals SET plan = $2::jsonb, updated_at = now()
+      WHERE id = $1 AND status = 'ACTIVE' AND plan IS NULL RETURNING id`,
+    [id, JSON.stringify(plan)],
+  );
+  return rows.length === 1;
+}
+
+export async function saveGoalPlan(id: string, plan: GoalPlan): Promise<void> {
+  await query('UPDATE agent_goals SET plan = $2::jsonb, updated_at = now() WHERE id = $1',
+    [id, JSON.stringify(plan)]);
+}
 
 export async function addGoal(input: {
   agentId: string;

@@ -7,6 +7,7 @@ import {
   PROVIDER_KINDS,
   TELEGRAM_OUTBOX_STATES,
   TRACE_EVENT_TYPES,
+  GOAL_PLAN_STATES,
   CHECK_BOARD_CHAINS,
   EVIDENCE_COMPARE_SIDES,
   EVIDENCE_MOVE_WINDOWS,
@@ -38,6 +39,19 @@ import { createFixture } from '../support/fixtures';
 import { uniqueSuffix } from '../support/db';
 
 installHarness();
+
+it('accepts every goal plan state and rejects unknown or missing states', async () => {
+  const f = await createFixture();
+  const { deliberation: mind } = await import('@xbam/database');
+  const goal = await mind.addGoal({ agentId: f.agentId, summary: 'Read the current time.' });
+  for (const state of GOAL_PLAN_STATES) {
+    await query('UPDATE agent_goals SET plan=$2::jsonb WHERE id=$1', [goal.id, JSON.stringify({ state })]);
+  }
+  for (const plan of [{ state: 'RETRY' }, {}, []]) {
+    await expect(query('UPDATE agent_goals SET plan=$2::jsonb WHERE id=$1', [goal.id, JSON.stringify(plan)]))
+      .rejects.toThrow(/check constraint/);
+  }
+});
 
 it('persists evidence-card reservations with job foreign keys and nullable owner confirmation', async () => {
   const f = await createFixture();

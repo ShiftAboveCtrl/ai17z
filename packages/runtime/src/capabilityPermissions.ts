@@ -61,8 +61,9 @@ export interface CapabilitySettings {
  * `permissions` and never `configs`. So every capability was handed `{}` and
  * the sentence describing where it came from was false. See migration 0069.
  */
-export async function capabilitySettings(agentId: string): Promise<CapabilitySettings> {
-  const stored = await permissionsRepo.listForAgent(agentId).catch(() => []);
+export async function capabilitySettings(agentId: string, options: { failClosed?: boolean } = {}): Promise<CapabilitySettings> {
+  const read = permissionsRepo.listForAgent(agentId);
+  const stored = await (options.failClosed ? read : read.catch(() => []));
   const byId = new Map(stored.map((row) => [row.capability_id, row]));
   const permissions = new Map<string, CapabilityPermission>();
   const configs = new Map<string, Record<string, unknown>>();

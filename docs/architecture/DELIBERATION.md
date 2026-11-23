@@ -168,6 +168,36 @@ Off by default. An agent does not start thinking because it was created.
 model calls and changes the agent's own state, and an owner who pressed pause
 did not mean "keep developing opinions".
 
+### A goal can drive a bounded plan
+
+On a worker wake, an active goal with no previous plan may get one attempt.
+This requires the owner's `policy.tools.capabilityLoop` opt-in, at least THINK,
+and a configured classifier. The plan is adaptive: each capability result feeds
+the next choice in `runCapabilityLoop`. There is no separate executor or timer.
+The ceiling is three model turns and sixty seconds, checked again after model
+generation and gate reads. A capability's existing timeout is capped by the
+remaining budget, as is the model provider's existing timeout. A late response
+cannot start a capability or another model turn.
+
+Below ACT the first chosen step becomes a proposal and the plan ends normally.
+At ACT every choice still passes schema, readiness, permission and the
+capability's existing execution gates. Permissions, configuration, autonomy,
+goal status, policy and PAUSE ALL are reread between choices and after model
+generation. Writes keep their existing disabled defaults. An approval request
+or refusal ends the attempt; enabling a grant later never revives it. Channel
+writes that require a job still require one and cannot use a goal as a bypass.
+
+`agent_goals.plan` records the bounded attempt and its terminal sentence without
+changing goal status or owner progress. Each chosen step gets one
+`CAPABILITY_USED` trace with the goal id, after committed writes and outside a
+transaction. Proposals keep schema-validated inputs for owner review. Goal
+plans retain no model output or conversation transcript, including in
+`model_calls`; the structured steps and invocation results are the evidence.
+
+A committed claim prevents two wakes replaying one goal. If a process stops
+mid-plan, a later wake records it as interrupted once its budget has passed.
+It never retries an action whose remote outcome might already have happened.
+
 ## What a wake is allowed to see
 
 The window is on **when this installation first recorded something**, never on

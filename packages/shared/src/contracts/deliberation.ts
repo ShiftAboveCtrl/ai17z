@@ -1,5 +1,16 @@
 import { z } from 'zod';
 
+export const GOAL_PLAN_STATES = ['RUNNING', 'COMPLETED', 'PROPOSED', 'STOPPED', 'EXHAUSTED'] as const;
+export interface GoalPlan {
+  state: (typeof GOAL_PLAN_STATES)[number];
+  startedAt: string;
+  maxSteps: number;
+  budgetMs: number;
+  /** Conclusions and capability references only, never model deliberation. */
+  steps: { capabilityId: string; outcome: string; durationMs: number; input: unknown }[];
+  summary: string;
+}
+
 /**
  * Persistent autonomous deliberation: the vocabulary.
  *
