@@ -67,7 +67,8 @@ against the session the agent needs for its own work. See `X_READING.md`.
 | Table | Notes |
 | --- | --- |
 | `agent_attention` | The working set: what is on an agent's mind, with the factors that put it there. Unique on `(agent, kind, fingerprint)`, which is what makes a repeat sighting reinforcement rather than duplication. |
-| `agent_goals` | What it is trying to do, and whether an owner or the agent decided. |
+| `agent_goals` | What it is trying to do, and whether an owner or the agent decided. Also the daily budget, the 2 KB checkpoint of what earlier attempts found, when the next attempt may start, and any proposed ending or block. |
+| `agent_goal_attempts` | One row per wake attempt at a goal, so a goal that needs more than one wake keeps its history. Unique on `(goal, attempt number)`, and at most one RUNNING per goal. |
 | `agent_reflections` | Every time deliberation ran, including the runs that found nothing. |
 | `agent_wake` | When an agent next thinks, and how much it may do on its own. One row per agent, claimed by the statement that moves its due time. |
 | `repo_sources` / `repo_events` | Repositories being watched and what they did. Read only; the token, when there is one, is sealed under the master key and never selected into anything a route can return. |

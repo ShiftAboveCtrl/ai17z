@@ -35,6 +35,7 @@ intend     turn the strongest of it into candidates the existing gates judge
 | --- | --- |
 | `agent_attention` | The working set. What is on its mind, with the factors that put it there. |
 | `agent_goals` | What it is trying to do, and who decided. |
+| `agent_goal_attempts` | One row per wake attempt at a goal: state, steps, a runtime sentence, new facts. |
 | `agent_reflections` | Every time it looked, including the times it found nothing. |
 | `agent_wake` | When it next thinks, and how much it may do on its own. |
 
@@ -170,7 +171,7 @@ did not mean "keep developing opinions".
 
 ### A goal can drive a bounded plan
 
-On a worker wake, an active goal with no previous plan may get one attempt.
+On a worker wake, an active goal that is due may get one attempt.
 This requires the owner's `policy.tools.capabilityLoop` opt-in, at least THINK,
 and a configured classifier. The plan is adaptive: each capability result feeds
 the next choice in `runCapabilityLoop`. There is no separate executor or timer.
@@ -197,6 +198,51 @@ plans retain no model output or conversation transcript, including in
 A committed claim prevents two wakes replaying one goal. If a process stops
 mid-plan, a later wake records it as interrupted once its budget has passed.
 It never retries an action whose remote outcome might already have happened.
+
+### A goal lasts across wakes
+
+A goal is not finished by its first attempt. Each wake attempt is a row in
+`agent_goal_attempts` (state, steps, one runtime sentence, how many new facts it
+added), and `agent_goals.plan` stays the latest attempt so every reader of it is
+unchanged. There is still no timer or second executor: eligibility is decided
+inside `pursueGoal` on each worker wake, and every step still runs through
+`runCapabilityLoop` with the same checkpoint that rereads permissions, autonomy
+and PAUSE ALL.
+
+- **Due.** An active goal with no block and no proposed ending, whose
+  `next_attempt_at` has passed. The claim is one statement that replaces the
+  plan only if no attempt is running, so two wakes cannot both start one. A
+  grant revoked in an earlier attempt is not revived: each attempt starts fresh
+  and obeys current permissions.
+- **Budget.** Each goal has a daily step budget (default 6) and a daily time
+  budget (default three minutes), measured over a rolling 24 hours, not a
+  calendar day. An attempt keeps its ceilings of three steps and a minute,
+  clamped to what is left. A goal out of budget records that as the wake result
+  once and waits until its oldest attempt leaves the window.
+- **Pace.** The next attempt waits the wake interval or two hours, whichever is
+  longer, doubling up to eight times after attempts that added no new fact and
+  resetting when one does.
+- **What carries over.** `agent_goals.resume` is a strict, 2 KB checkpoint:
+  at most eight facts, each one line built by code from the fields a capability
+  returned after its schema accepted them (never a model sentence), plus the
+  last attempt's own concluding sentence. Facts expire after seven days. The
+  next prompt shows them inside the same untrusted evidence fence as research,
+  marked "looked up earlier, may be stale", and never as an instruction.
+- **A write whose outcome is unknown.** If an attempt's last step was a write
+  that neither succeeded nor was refused (a timeout, a failure), the goal gets a
+  `blocked_reason` and no further attempt starts until the owner has checked and
+  pressed unblock. A refusal is not such a case: it never ran.
+- **Ending.** The agent proposes and the owner accepts. A final line
+  `DONE: <reason>` or `ABANDON: <reason>` (reason 6 to 300 characters) sets
+  `proposed_end`; nothing else a model writes ends anything. Five attempts in a
+  row with no new fact propose `ABANDON` the same way. Deliberation still never
+  writes `status`, `progress`, `resolution` or `resolved_at`: accepting goes
+  through the owner route and `updateGoal`, and dismissing keeps the goal going.
+
+The Mind screen shows each goal's budget used today, its attempts with their
+steps and sentences (an attempt that did nothing says so), what it carries
+forward, any step waiting under Capability approvals, and the Accept, Keep going
+and unblock decisions.
 
 ## What a wake is allowed to see
 
@@ -475,6 +521,7 @@ builds do. A release always counts; a red build counts because somebody may ask.
 | --- | --- |
 | Attention, declines, decay, fingerprints | `tests/unit/salience.test.ts` |
 | Observe, attend, reflect, goals, pause, backoff, restart-safety | `tests/integration/deliberation.test.ts` |
+| Goal attempts across wakes, budgets, proposed endings, owner decisions | `tests/integration/goalAttempts.test.ts`, `tests/unit/goalResume.test.ts` |
 | What reaches a reply, and what stays out of one | same file |
 | What a project did, and what is never worth mentioning | `tests/unit/repoWatcher.test.ts` |
 | Subjects it will not raise, and the engineering talk it must not refuse | `tests/unit/reticence.test.ts` |
