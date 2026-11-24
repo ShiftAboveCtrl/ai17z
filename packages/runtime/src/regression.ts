@@ -107,8 +107,8 @@ export async function advanceRegression(runId: string): Promise<void> {
         const saved = await regression.getCase(run.agentId, result.caseId);
         if (!saved) throw new NotFoundError('Case');
         // A saved real post is replayed locally from the exact text and thread snapshot.
-        const queued = await rehearse({ agentId: run.agentId, candidate: run.candidate ?? undefined,
-          subject: { ...saved.subject, channel: 'mock', occurredAt: new Date().toISOString(), conversationRef: `regression_${runId}_${result.caseId}`,
+        const queued = await rehearse({ agentId: run.agentId, candidate: run.candidate ?? undefined, replayOnMock: true,
+          subject: { ...saved.subject, occurredAt: new Date().toISOString(), conversationRef: `regression_${runId}_${result.caseId}`,
             authorHandle: `tester_${result.caseId.replaceAll('-', '')}_${runId.slice(0, 8)}` } });
         const job = await jobs.requireJob(queued.jobId);
         if (!job.dryRun) throw PipelineError.permanent('regression_not_dry', 'A regression job must be a rehearsal.');
@@ -136,6 +136,7 @@ export async function runRegression(input: { agentId: string; trigger: Regressio
 }
 
 export async function regressionRunView(id: string) {
+  // Reading deliberately resumes persisted work, so an unfinished run can queue its next case.
   await advanceRegression(id);
   const run = await regression.getRun(id);
   if (!run) return null;

@@ -4,7 +4,7 @@
   "mode": "SHARE",
   "exportedAt": "2026-11-11T00:00:00.000Z",
   "exportedByVersion": "1.0.0-beta.93",
-  "checksum": "4718b80e7c06d814377a93ce7e3d5278079f29ffd7032b01afe006f7cf773e50",
+  "checksum": "cb6a95c5fe652885b915494c1df2a9ce6858b64b3017018f7bc93670227fe892",
   "agent": {
     "format": "ai17z-agent",
     "version": 3,
@@ -264,6 +264,10 @@
         "contributeNarrativeTerms": false,
         "postReceiptsRecap": false,
         "receiptsRecapImage": false
+      },
+      "regression": {
+        "autoRunOnChange": false,
+        "maxRunsPerDay": 1
       }
     },
     "cadence": null,

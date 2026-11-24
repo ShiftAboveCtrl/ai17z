@@ -126,6 +126,8 @@ export async function rehearse(input: {
   subject: RehearsalSubject;
   requestedBy?: string | null;
   candidate?: RegressionCandidate;
+  /** Replay retained text locally while keeping its original addressing semantics. */
+  replayOnMock?: boolean;
 }): Promise<RehearsalRun> {
   const agent = await agentsRepo.getAgent(input.agentId);
   if (!agent) throw new NotFoundError('Agent');
@@ -153,7 +155,7 @@ export async function rehearse(input: {
     dryRun: true,
     candidate: input.candidate,
     event: {
-      channel: subject.channel,
+      channel: input.replayOnMock ? 'mock' : subject.channel,
       type: eventTypeFor(subject.as),
       remoteEventId,
       remoteMessageId: subject.remoteId ?? remoteEventId,

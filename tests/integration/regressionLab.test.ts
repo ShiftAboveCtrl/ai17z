@@ -5,9 +5,10 @@ import * as runtime from '@xbam/runtime';
 import { loadJobBundle } from '../../packages/runtime/src/loadJob';
 import * as rehearsals from '../../packages/runtime/src/rehearse';
 import { mockAdapter } from '../../packages/models/src/providers/mock';
+import { xAdapter, mockAdapter as localChannel } from '@xbam/channels';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
-import { drainJobs, runOne } from '../support/runner';
+import { drainJobs, drainAgentJobs, runOne } from '../support/runner';
 
 installHarness();
 afterEach(() => vi.restoreAllMocks());
@@ -148,4 +149,31 @@ it('keeps a paused run as a failure with agent_paused and enforces case caps', a
   const view = (await runtime.regressionRunView(run.id))!;
   expect(view.results).toHaveLength(12);
   expect(view.results.every(r => r.error?.includes('agent_paused'))).toBe(true);
+});
+
+
+it('keeps an unaddressed real X rehearsal silent on its first local replay', async () => {
+  // The source uses X semantics; only its browser read is replaced with the retained text.
+  vi.spyOn(xAdapter, 'resolveContext').mockImplementation(localChannel.resolveContext);
+  const f = await createFixture({ persona: { topics: ['databases'] }, policy: {
+    engagement: { ...PolicyConfig.parse({}).engagement, strategy: 'SELECTIVE', minimumReplyValue: 50 },
+  } });
+  const original = await runtime.rehearse({ agentId: f.agentId, subject: {
+    channel: 'x', authorHandle: 'reader', text: 'What is your favourite flower in the garden?',
+  } });
+  await drainAgentJobs(f.agentId);
+  const c = await runtime.saveRegressionCase({ agentId: f.agentId, jobId: original.jobId,
+    title: 'Unaddressed stranger', checks: { mustBeSilent: true }, createdBy: f.ownerId });
+  expect(c.subject.channel).toBe('x');
+  expect(c.baseline.decision).toBe('SILENT');
+  const run = await runtime.runRegression({ agentId: f.agentId, trigger: 'MANUAL' });
+  await drainJobs();
+  const result = (await runtime.regressionRunView(run.id))!.results[0]!;
+  expect(result.digest!.decision).toBe('SILENT');
+  expect(result.diff!.severity).toBe('SAME');
+  const job = await jobs.requireJob(result.jobId!);
+  expect(job.channel).toBe('mock');
+  expect(job.requiresBrowser).toBe(false);
+  expect(job.dryRun).toBe(true);
+  expect((await events.getEvent(job.eventId))!.payload.rehearsalSubject).toMatchObject({ channel: 'x' });
 });

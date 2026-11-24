@@ -691,3 +691,14 @@ describe('every artifact kind the code can write is one the database accepts', (
     ).rejects.toThrow();
   });
 });
+
+
+it('accepts every regression change trigger and refuses an unknown one', async () => {
+  const f = await createFixture();
+  for (const trigger of ['PERSONA', 'POLICY', 'MODEL']) {
+    await query('DELETE FROM agent_regression_changes WHERE agent_id=$1', [f.agentId]);
+    expect(await query('INSERT INTO agent_regression_changes(agent_id,trigger) VALUES($1,$2) RETURNING agent_id', [f.agentId, trigger])).toHaveLength(1);
+  }
+  await query('DELETE FROM agent_regression_changes WHERE agent_id=$1', [f.agentId]);
+  await expect(query("INSERT INTO agent_regression_changes(agent_id,trigger) VALUES($1,'MANUAL')", [f.agentId])).rejects.toThrow(/check constraint/);
+});

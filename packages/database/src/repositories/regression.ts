@@ -1,6 +1,6 @@
 import type { DecisionDigest, RegressionCase, RegressionChecks, RegressionResult, RegressionRun, RegressionCandidate, RegressionTrigger, RegressionSubject } from '@xbam/shared/contracts';
 import { BadRequestError, NotFoundError } from '@xbam/shared';
-import { query, queryOne, withTransaction } from '../pool';
+import { query, queryOne, withTransaction, type Tx } from '../pool';
 import { mapRow, mapRows } from '../mapper';
 
 export async function listCases(agentId: string): Promise<RegressionCase[]> {
@@ -25,10 +25,12 @@ export async function editCase(agentId: string, id: string, patch: { title?: str
   if (!row) throw new NotFoundError('Case');
   return mapRow<RegressionCase>(row)!;
 }
+// The unique active-run index is the final guard when callers race to start a run.
 export async function createRun(input: { agentId: string; trigger: RegressionTrigger; candidate?: RegressionCandidate; limit?: number }): Promise<RegressionRun> {
   return withTransaction(async tx => {
     await tx.one('SELECT id FROM agents WHERE id=$1 FOR UPDATE', [input.agentId]);
     const run = mapRow<RegressionRun>(await tx.one(`INSERT INTO agent_regression_runs(agent_id,trigger,candidate) VALUES($1,$2,$3::jsonb) RETURNING *`, [input.agentId, input.trigger, input.candidate ? JSON.stringify(input.candidate) : null]))!;
+    // Freeze expectations so later case edits or accepted baselines cannot rewrite this run.
     await tx.query(`INSERT INTO agent_regression_results(run_id,case_id,baseline,checks,title)
       SELECT $1,id,baseline,checks,title FROM agent_regression_cases WHERE agent_id=$2 AND archived_at IS NULL ORDER BY created_at,id LIMIT $3`, [run.id, input.agentId, input.limit ?? 12]);
     return run;
@@ -52,9 +54,12 @@ export async function finishRun(id: string): Promise<void> {
 export async function activeRuns(): Promise<RegressionRun[]> {
   return mapRows<RegressionRun>(await query('SELECT * FROM agent_regression_runs WHERE finished_at IS NULL ORDER BY created_at'));
 }
-export async function noteChange(agentId: string, trigger: 'PERSONA' | 'POLICY' | 'MODEL') {
-  await query(`INSERT INTO agent_regression_changes(agent_id,trigger) VALUES($1,$2)
-    ON CONFLICT(agent_id) DO UPDATE SET trigger=$2, changed_at=now(), pending=true`, [agentId, trigger]);
+// The notice commits with its configuration so a successful save cannot lose the reminder.
+export async function noteChange(agentId: string, trigger: 'PERSONA' | 'POLICY' | 'MODEL', tx?: Tx) {
+  const db = tx ?? { query };
+  // Transaction start time can predate a run that did not include this save.
+  await db.query(`INSERT INTO agent_regression_changes(agent_id,trigger,changed_at) VALUES($1,$2,clock_timestamp())
+    ON CONFLICT(agent_id) DO UPDATE SET trigger=$2, changed_at=excluded.changed_at, pending=true`, [agentId, trigger]);
 }
 export async function changeNotice(agentId: string) {
   return mapRow<{ agentId: string; trigger: 'PERSONA' | 'POLICY' | 'MODEL'; changedAt: string; pending: boolean }>(await queryOne('SELECT * FROM agent_regression_changes WHERE agent_id=$1', [agentId]));
@@ -63,6 +68,7 @@ export async function pendingChanges() {
   return mapRows<{ agentId: string; trigger: 'PERSONA' | 'POLICY' | 'MODEL' }>(await query('SELECT * FROM agent_regression_changes WHERE pending=true'));
 }
 export async function acknowledgeChange(agentId: string, through: string) {
+  // A save made after this run started still needs its own check.
   await query('UPDATE agent_regression_changes SET pending=false WHERE agent_id=$1 AND changed_at <= $2::timestamptz', [agentId, through]);
 }
 export async function runsToday(agentId: string): Promise<number> {

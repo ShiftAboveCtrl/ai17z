@@ -24,10 +24,14 @@ import {
   unpackAgent,
 } from '@xbam/runtime';
 import { resetCapabilitiesForTest } from '@xbam/tools';
+import { ingestNormalizedEvent } from '@xbam/runtime';
+import { mockEvent } from '../support/harness';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
 import { uniqueSuffix } from '../support/db';
 import { fixtureBytes } from '../support/imageFixtures';
+
+installHarness();
 
 it('excludes retained third-party regression subjects from SHARE and MOVE', async () => {
   const fixture = await createFixture();
@@ -37,14 +41,18 @@ it('excludes retained third-party regression subjects from SHARE and MOVE', asyn
   await drainJobs();
   await saveRegressionCase({ agentId: fixture.agentId, jobId: run.jobId, title: 'Retained case zq942', checks: {}, createdBy: fixture.ownerId });
   expect(await regression.listCases(fixture.agentId)).toHaveLength(1);
+  await memoriesRepo.writeMemory({ agentId: fixture.agentId, scope: 'PERSONA', memoryType: 'FACT', content: 'Retained rehearsal memory zq942', sourceJobId: run.jobId });
+  const real = await ingestNormalizedEvent({ accountId: null, onlyAgentId: fixture.agentId, event: mockEvent('A real incoming question?') });
+  await memoriesRepo.writeMemory({ agentId: fixture.agentId, scope: 'PERSONA', memoryType: 'FACT', content: 'Ordinary real job memory', sourceJobId: real.jobs[0]!.job.id });
+  const moved = await packAgent(fixture.agentId, 'MOVE');
+  expect(moved.learned!.memories.some(m => m.content === 'Ordinary real job memory')).toBe(true);
+
   for (const mode of ['SHARE', 'MOVE'] as const) {
     const text = serialisePackage(await packAgent(fixture.agentId, mode));
     expect(text).not.toContain('zq942');
     expect(text).not.toContain('agent_regression');
   }
 });
-
-installHarness();
 
 /** An agent with enough on it that a round trip has something to prove. */
 /** An agent whose primary model points at a provider with a real key. */

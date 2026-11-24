@@ -1,7 +1,8 @@
 import type { ModelConfig, ModelRole, ProviderCredential, ProviderKind } from '@xbam/shared/contracts';
 import { NotFoundError, openSecret, sealSecret, secretFingerprint } from '@xbam/shared';
-import { query, queryOne } from '../pool';
+import { query, queryOne, withTransaction } from '../pool';
 import { mapRow, mapRows } from '../mapper';
+import { noteChange } from './regression';
 
 /**
  * `sealed_api_key` is never selected into anything the API can return. The only
@@ -174,18 +175,27 @@ export async function setModelConfig(input: {
   model: string;
   parameters: Record<string, unknown>;
 }): Promise<void> {
-  await query(
-    `INSERT INTO model_configs (agent_id, role, provider_credential_id, model, parameters)
-     VALUES ($1,$2,$3,$4,$5::jsonb)
-     ON CONFLICT (agent_id, role) DO UPDATE
-       SET provider_credential_id = excluded.provider_credential_id,
-           model = excluded.model,
-           parameters = excluded.parameters,
-           updated_at = now()`,
-    [input.agentId, input.role, input.providerCredentialId, input.model, JSON.stringify(input.parameters)],
-  );
+  await withTransaction(async tx => {
+    const changed = await tx.query(
+      `INSERT INTO model_configs (agent_id, role, provider_credential_id, model, parameters)
+       VALUES ($1,$2,$3,$4,$5::jsonb)
+       ON CONFLICT (agent_id, role) DO UPDATE
+         SET provider_credential_id = excluded.provider_credential_id,
+             model = excluded.model,
+             parameters = excluded.parameters,
+             updated_at = now()
+       WHERE (model_configs.provider_credential_id, model_configs.model, model_configs.parameters)
+         IS DISTINCT FROM (excluded.provider_credential_id, excluded.model, excluded.parameters)
+       RETURNING id`,
+      [input.agentId, input.role, input.providerCredentialId, input.model, JSON.stringify(input.parameters)],
+    );
+    if (changed.rowCount) await noteChange(input.agentId, 'MODEL', tx);
+  });
 }
 
 export async function deleteModelConfig(agentId: string, role: ModelRole): Promise<void> {
-  await query('DELETE FROM model_configs WHERE agent_id = $1 AND role = $2', [agentId, role]);
+  await withTransaction(async tx => {
+    const changed = await tx.query('DELETE FROM model_configs WHERE agent_id = $1 AND role = $2 RETURNING id', [agentId, role]);
+    if (changed.rowCount) await noteChange(agentId, 'MODEL', tx);
+  });
 }

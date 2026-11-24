@@ -57,7 +57,6 @@ import {
   memories as memoriesRepo,
   query,
   capabilityInvocations,
-  regression,
 } from '@xbam/database';
 import { agentStatusNow, compileForJob, fingerprintFor, refreshFingerprint, validateGraph } from '@xbam/runtime';
 import { handler, params, parseBody, requireUser } from '../http';
@@ -91,7 +90,6 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
       // instead of leaving forty behind for one afternoon of editing.
       const autosave = (request.query as { autosave?: string } | undefined)?.autosave === '1';
       const version = await agentsRepo.savePersonaVersion(agent.id, draft, user.id, { autosave });
-      await regression.noteChange(agent.id, 'PERSONA');
       await ops.audit({
         actorUserId: user.id,
         action: 'persona.saved',
@@ -120,7 +118,6 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
       const agent = await ownedAgent(params(request).id!, user);
       const body = parseBody(z.object({ config: PolicyConfig, changeNote: z.string().max(500).default('') }), request);
       const version = await agentsRepo.savePolicyVersion(agent.id, body.config, body.changeNote, user.id);
-      await regression.noteChange(agent.id, 'POLICY');
       await ops.audit({
         actorUserId: user.id,
         action: 'policy.saved',
@@ -174,7 +171,7 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
         model: input.model,
         parameters: input.parameters,
       });
-      await regression.noteChange(agent.id, 'MODEL');
+
       return { items: await providersRepo.listModelConfigs(agent.id) };
     }),
   );
@@ -186,7 +183,6 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
       const agent = await ownedAgent(params(request).id!, user);
       const role = ModelRole.parse(params(request).role);
       await providersRepo.deleteModelConfig(agent.id, role);
-      await regression.noteChange(agent.id, 'MODEL');
       return { items: await providersRepo.listModelConfigs(agent.id) };
     }),
   );

@@ -31,7 +31,9 @@ that path and checks every job again. Saved real posts replay on the local mock
 channel from their retained snapshot, including parent text and reader gaps.
 No browser is needed for a rerun. No run can publish.
 
-Persona, policy, model and Foundry saves leave a pending change notice. Runs are
+Explicit persona, policy, model and Foundry saves leave a pending change notice.
+Persona autosaves wait for an explicit save so unfinished typing does not spend
+the daily automatic run. Unchanged policy and model saves leave no new notice. Runs are
 manual by default. The versioned regression.autoRunOnChange setting explicitly
 enables the existing worker sweep to run pending changes. Its daily cap is one
 by default, at most three, counted in UTC and including manual runs. Preview
@@ -39,3 +41,10 @@ does not clear a pending notice. A later save is not cleared by an earlier run.
 
 Cases contain third-party text and stay local. SHARE and MOVE packages exclude
 cases, runs, results and change notices. Deleting an agent cascades through them.
+
+Preview scope: the candidate persona and policy replace the job bundle in memory.
+Ingest gates still use the saved active policy before that bundle exists. Evidence
+card and evidence image gates, and the growth gate, also read the saved active
+policy directly. A preview cannot predict the effect of changing those gates;
+save the configuration and run the cases again to check them. The digest's policy
+version id identifies the saved starting version, not a newly saved candidate.
