@@ -6,6 +6,8 @@ export const RegressionCandidate = z.object({ persona: PersonaDraft.optional(), 
 export type RegressionCandidate = z.infer<typeof RegressionCandidate>;
 export const REGRESSION_TRIGGERS = ['MANUAL', 'PERSONA', 'POLICY', 'MODEL', 'PREVIEW'] as const;
 export type RegressionTrigger = typeof REGRESSION_TRIGGERS[number];
+// What a recorded change can be: a manual run or a preview is not a change to the agent.
+export const REGRESSION_CHANGE_TRIGGERS = ['PERSONA', 'POLICY', 'MODEL'] as const;
 export const RegressionChecks = z.object({
   mustBeSilent: z.boolean().optional(), silentOk: z.boolean().optional(),
   forbid: z.array(z.string().max(500)).max(100).optional(),
