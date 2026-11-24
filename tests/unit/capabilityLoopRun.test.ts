@@ -98,6 +98,58 @@ describe('the capability loop', () => {
       }));
     } finally { save.mockRestore(); }
   });
+
+  it('offers an approved pure read while excluding an unknown READ-labelled capability', async () => {
+    registerCapability(defineCapability({ ...clock, id: 'time.now' }));
+    const outcome = await runCapabilityLoop({ ...base, task: 'time.now test.clock test.settings',
+      permissions: new Map([['time.now', 'ALLOWED'], ['test.clock', 'ALLOWED'], ['test.settings', 'ALLOWED']]),
+      readOnly: { sanitize: text => text, checkpoint: async () => undefined },
+      generate: async () => 'No lookup needed.',
+    });
+    expect(outcome.shortlist.offered.map(c => c.id)).toEqual(['time.now']);
+  });
+  it.each(['agent.cannot_change', 'paper.trade', 'plugin.mislabelled_read'])('excludes READ-labelled writer %s from external turns', async id => {
+    let writes = 0;
+    registerCapability(defineCapability({ ...clock, id, async run() { writes++; return { now: 'written' }; } }));
+    const outcome = await runCapabilityLoop({ ...base, audience: 'OWNER', task: id,
+      permissions: new Map([[id, 'ALLOWED']]),
+      readOnly: { sanitize: text => text, checkpoint: async () => undefined },
+      generate: vi.fn().mockResolvedValueOnce(call(id)).mockResolvedValueOnce('No changes.'),
+    });
+    expect(writes).toBe(0);
+    expect(outcome.shortlist.offered.every(c => ['time.now', 'agent.self_state', 'agent.explain_action'].includes(c.id))).toBe(true);
+    expect(outcome.steps[0]?.outcome).toBe('REFUSED');
+  });
+
+  it('an external read-only turn refuses even an explicitly allowed write capability', async () => {
+    let writes = 0;
+    registerCapability(defineCapability({
+      id: 'test.write', name: 'Clock write', description: 'Change the clock.',
+      category: 'ENGAGE', effect: 'WRITE', risk: 'LOW', modelCallable: true,
+      input: z.object({}), output: z.object({ ok: z.boolean() }), timeoutMs: 1_000,
+      async run() { writes++; return { ok: true }; },
+    }));
+    let turns = 0;
+    const outcome = await runCapabilityLoop({ ...base,
+      task: 'change the clock with test.write',
+      permissions: new Map([['test.write', 'ALLOWED']]),
+      readOnly: { sanitize: text => text, checkpoint: async () => undefined },
+      generate: async () => turns++ === 0 ? call('test.write') : 'No change was made.',
+    });
+    expect(writes).toBe(0);
+    expect(outcome.shortlist.offered.map(c => c.id)).not.toContain('test.write');
+    expect(outcome.steps[0]?.outcome).toBe('REFUSED');
+  });
+
+  it('checks external revocation again after generation and before invoking a read', async () => {
+    let checks = 0;
+    await expect(runCapabilityLoop({ ...base,
+      readOnly: { sanitize: text => text, checkpoint: async () => { if (++checks === 2) throw new Error('revoked'); } },
+      generate: async () => call('test.clock'),
+    })).rejects.toThrow('revoked');
+    expect(recorded).toHaveLength(0);
+  });
+
   it.each([
     { input: { ignored: 'not retained' }, parsed: {} },
     { input: 'invalid input', parsed: null },

@@ -152,3 +152,4 @@ export type { WalletIntentRow, WalletRow } from './repositories/wallets';
 export type { AgentChangeRow, AgentChangeRisk, AgentChangeStatus, AgentChangeSubsystem } from './repositories/agentChanges';
 
 export * as postMediaDecisions from './repositories/postMediaDecisions';
+export * as agentMcp from './repositories/agentMcp';

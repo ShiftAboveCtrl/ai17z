@@ -18,6 +18,17 @@ import { shortlistCapabilities, type Shortlist } from './capabilityRelevance';
 
 const log = createLogger('capability-loop');
 
+// Reviewed pure reads only. Effect labels also cover simulated and bookkeeping
+// writes, so neither READ nor owner permission grants external execution.
+export const EXTERNAL_READ_CAPABILITIES: ReadonlySet<string> = new Set([
+  'time.now', 'memory.search',
+  'agent.self_state', 'agent.health_report', 'agent.recent_activity',
+  'agent.growth_summary', 'agent.learning_status', 'agent.current_goals',
+  'agent.recent_reflections', 'agent.explain_belief', 'agent.relationship_summary',
+  'agent.explain_action', 'agent.explain_silence', 'agent.owner_decisions',
+  'agent.recent_changes', 'agent.memory',
+]);
+
 /**
  * The loop AI17Z did not have.
  *
@@ -45,6 +56,8 @@ const log = createLogger('capability-loop');
  * back.
  */
 export interface LoopOptions {
+  /** External owner clients can read, but cannot inherit owner-chat writes. */
+  readOnly?: { sanitize(text: string): string; sanitizeValue?(value: unknown): unknown; checkpoint(): Promise<void> };
   agentId: string;
   jobId: string | null;
   accountId: string | null;
@@ -203,6 +216,7 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
    */
   const audience = options.audience ?? 'PUBLIC';
   const available = listModelCallable().filter((capability) => {
+    if (options.readOnly && (capability.effect !== 'READ' || !EXTERNAL_READ_CAPABILITIES.has(capability.id))) return false;
     if (capability.id === 'room.delegate' && !options.delegation) return false;
     if (capability.audience === 'OWNER' && audience !== 'OWNER') return false;
     const stored = options.permissions.get(capability.id) ?? null;
@@ -259,7 +273,9 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
     }
     if (options.goalPlan && Date.now() >= deadline) { exhausted = true; break; }
 
-    const raw = await options.generate(messages);
+    await options.readOnly?.checkpoint();
+    const generated = await options.generate(messages);
+    const raw = options.readOnly ? options.readOnly.sanitize(generated) : generated;
     const turn = parseTurn(raw);
 
     // A slow model cannot spend the remaining budget and then start a remote
@@ -309,7 +325,8 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
     // A model can name something absent from its menu. Record the refusal
     // through the same path as an invocation without running readiness or code.
     const parsed = !wasOffered ? getCapability(turn.call.id)?.input.safeParse(turn.call.input) : undefined;
-    const result: InvocationResult = !wasOffered ? {
+    await options.readOnly?.checkpoint();
+    const invoked: InvocationResult = !wasOffered ? {
       capabilityId: turn.call.id,
       outcome: 'REFUSED',
       detail: "That capability was not offered on this turn's menu.",
@@ -335,7 +352,15 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
       ...(options.goalPlan ? { budgetMs: Math.max(0, deadline - Date.now()) } : {}),
     });
 
-    if (result.needsApproval && result.input !== null) {
+    const result: InvocationResult = options.readOnly
+      ? options.readOnly.sanitizeValue
+        ? options.readOnly.sanitizeValue(invoked) as InvocationResult
+        : JSON.parse(options.readOnly.sanitize(JSON.stringify(invoked))) as InvocationResult
+      : invoked;
+
+    // An external read-only turn may read and nothing else, so it never queues
+    // a proposal either: a row an owner must act on is a write.
+    if (!options.readOnly && result.needsApproval && result.input !== null) {
       if (!(await propose(result.capabilityId, result.input, step, 'This capability requires owner approval for this call.'))) {
         result.detail = 'The call could not be queued for owner approval.';
       }

@@ -160,6 +160,7 @@ export interface ChatTurnOutcome {
 }
 
 export interface ChatWorkerOptions {
+  readOnly?: { sanitize(text: string): string; sanitizeValue?(value: unknown): unknown; checkpoint(): Promise<void> };
   /** Whether this worker owns a browser, so can search the web through the agent's X account. */
   mayResearch: boolean;
 }
@@ -274,6 +275,7 @@ export async function writeAnswer(answer: ChatMessage, options: ChatWorkerOption
     error,
   });
   try {
+    await options.readOnly?.checkpoint();
     if (!answer.agentId) return failed('That agent no longer exists.');
     const conversation = await chatRepo.conversationById(answer.conversationId);
     if (!conversation) return failed('The conversation was deleted.');
@@ -323,7 +325,7 @@ export async function writeAnswer(answer: ChatMessage, options: ChatWorkerOption
     const budget = await checkBudget(agent.id, policy);
     if (!budget.allow) return failed(budget.message ?? 'This agent is over its model budget for now.');
 
-    const settings = await capabilitySettings(agent.id, { failClosed: Boolean(delegated) });
+    const settings = await capabilitySettings(agent.id, { failClosed: Boolean(delegated || options.readOnly) });
     const paused = (await pauseState().catch(() => ({ paused: false }))).paused;
 
     /*
@@ -398,6 +400,7 @@ export async function writeAnswer(answer: ChatMessage, options: ChatWorkerOption
       capability is still subject to its own permission.
     */
     const loop = await runCapabilityLoop({
+      readOnly: options.readOnly,
       agentId: agent.id,
       jobId: delegated?.jobId ?? null,
       accountId: null,
@@ -423,9 +426,11 @@ export async function writeAnswer(answer: ChatMessage, options: ChatWorkerOption
           promptLayers: prompt.layers,
           promptText: prompt.promptText,
           maxCalls: 1,
+          sanitize: options.readOnly?.sanitize,
+          retainOutput: options.readOnly ? false : undefined,
           ...(delegated ? { signal: delegated.signal, timeoutMs: Math.max(1, delegated.deadline - Date.now()) } : {}),
         });
-        return last.text;
+        return options.readOnly ? options.readOnly.sanitize(last.text) : last.text;
       },
       permissions: settings.permissions,
       configs: settings.configs,
@@ -489,10 +494,17 @@ export async function writeAnswer(answer: ChatMessage, options: ChatWorkerOption
       const gate = await checkpoint();
       if (gate.reason) return failed(gate.reason, evidence);
     }
-    return { status: 'DONE', content: validated.output, evidence, error: null };
+    await options.readOnly?.checkpoint();
+    const outcome = { status: 'DONE' as const, content: validated.output, evidence, error: null };
+    return options.readOnly
+      ? options.readOnly.sanitizeValue
+        ? options.readOnly.sanitizeValue(outcome) as ChatTurnOutcome
+        : JSON.parse(options.readOnly.sanitize(JSON.stringify(outcome))) as ChatTurnOutcome
+      : outcome;
   } catch (error) {
-    log.warn('chat answer failed', { answerId: answer.id, message: errorMessage(error) });
-    return failed(errorMessage(error));
+    const message = options.readOnly ? options.readOnly.sanitize(errorMessage(error)) : errorMessage(error);
+    log.warn('chat answer failed', { answerId: answer.id, message });
+    return failed(message);
   }
 }
 
