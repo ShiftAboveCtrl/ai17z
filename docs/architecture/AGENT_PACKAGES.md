@@ -154,3 +154,6 @@ Plugin. Its behaviour can differ because confidential configuration is omitted.
 
 All three require a signed-in owner. Export and import are both audited — what
 was in it, never the contents.
+Regression cases, runs, results and change notices are local only. Neither SHARE
+nor MOVE includes them because subject snapshots may contain third-party text.
+See [REGRESSION_LAB.md](REGRESSION_LAB.md) for the rehearsal safety guarantees.

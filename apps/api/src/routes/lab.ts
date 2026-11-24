@@ -7,9 +7,11 @@ import {
   browserTasks as browserTasksRepo,
   jobs as jobsRepo,
   ops,
+  regression,
   type UserRow,
 } from '@xbam/database';
-import { explainRehearsal, rehearse } from '@xbam/runtime';
+import { explainRehearsal, rehearse, saveRegressionCase, runRegression, regressionRunView, acceptRegressionBaseline } from '@xbam/runtime';
+import { RegressionCandidate, RegressionChecks, REGRESSION_TRIGGERS } from '@xbam/shared/contracts';
 import { handler, params, parseBody, requireUser } from '../http';
 
 /**
@@ -57,6 +59,47 @@ const RealPost = z.object({
 });
 
 export async function labRoutes(app: FastifyInstance): Promise<void> {
+  app.get('/api/agents/:id/lab/cases', handler(async request => {
+    const agent = await ownedAgent(params(request).id!, await requireUser(request));
+    return { items: await regression.listCases(agent.id), change: await regression.changeNotice(agent.id) };
+  }));
+  app.post('/api/agents/:id/lab/cases', handler(async request => {
+    const user = await requireUser(request);
+    const agent = await ownedAgent(params(request).id!, user);
+    const body = parseBody(z.object({ jobId: z.string().uuid(), title: z.string().trim().min(1).max(200), checks: RegressionChecks.default({}) }).strict(), request);
+    return saveRegressionCase({ ...body, agentId: agent.id, createdBy: user.id });
+  }));
+  app.patch('/api/agents/:id/lab/cases/:caseId', handler(async request => {
+    const agent = await ownedAgent(params(request).id!, await requireUser(request));
+    const body = parseBody(z.object({ title: z.string().trim().min(1).max(200).optional(), checks: RegressionChecks.optional(), archive: z.literal(true).optional() }).strict(), request);
+    return regression.editCase(agent.id, params(request).caseId!, body);
+  }));
+  app.post('/api/agents/:id/lab/cases/:caseId/baseline', handler(async request => {
+    const agent = await ownedAgent(params(request).id!, await requireUser(request));
+    const body = parseBody(z.object({ runId: z.string().uuid() }).strict(), request);
+    return acceptRegressionBaseline(agent.id, params(request).caseId!, body.runId);
+  }));
+  app.get('/api/agents/:id/lab/runs', handler(async request => {
+    const agent = await ownedAgent(params(request).id!, await requireUser(request));
+    return { items: await regression.listRuns(agent.id) };
+  }));
+  app.post('/api/agents/:id/lab/runs', handler(async request => {
+    const agent = await ownedAgent(params(request).id!, await requireUser(request));
+    const body = parseBody(z.object({ trigger: z.enum(REGRESSION_TRIGGERS).default('MANUAL'), limit: z.number().int().min(1).max(40).optional() }).strict(), request);
+    if (body.trigger === 'PREVIEW') throw new BadRequestError('Use the preview route with an unsaved persona or policy.');
+    return runRegression({ agentId: agent.id, ...body });
+  }));
+  app.post('/api/agents/:id/lab/preview', handler(async request => {
+    const agent = await ownedAgent(params(request).id!, await requireUser(request));
+    const body = parseBody(z.object({ candidate: RegressionCandidate, limit: z.number().int().min(1).max(40).optional() }).strict(), request);
+    return runRegression({ agentId: agent.id, trigger: 'PREVIEW', ...body });
+  }));
+  app.get('/api/agents/:id/lab/runs/:runId', handler(async request => {
+    const agent = await ownedAgent(params(request).id!, await requireUser(request));
+    const run = await regression.getRun(params(request).runId!);
+    if (!run || run.agentId !== agent.id) throw new NotFoundError('Run');
+    return regressionRunView(run.id);
+  }));
   /**
    * Rehearse against something somebody typed.
    *

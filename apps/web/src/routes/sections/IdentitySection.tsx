@@ -7,6 +7,7 @@ import { describeSaveState, useAutosave, useAutosaveEnabled } from '@app/lib/aut
 import { PersonaSources } from '@app/components/PersonaSources';
 import { AvatarEditor } from '@app/components/AvatarEditor';
 import { Section } from './Section';
+import { RegressionControls } from '@app/components/RegressionLab';
 
 const IDENTITY_KINDS = ['DISCLOSED_AI', 'FICTIONAL', 'INSPIRED_BY', 'BRAND', 'REAL_PERSON_AUTHORIZED'] as const;
 const LENGTHS = ['TERSE', 'SHORT', 'MEDIUM', 'LONG', 'ADAPTIVE'] as const;
@@ -289,6 +290,7 @@ export function IdentitySection({
         <span className="ml-auto font-mono text-[10px] uppercase tracking-[0.16em] text-bone-faint">Currently v{draft.version}</span>
         {error && <p className="w-full text-sm text-signal-fail">{error}</p>}
       </div>
+      <RegressionControls agentId={agentId} candidate={{ persona: payload(draft) }} revision={saved} />
     </Section>
   );
 }

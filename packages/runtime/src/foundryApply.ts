@@ -29,6 +29,7 @@ import {
   research as researchRepo,
   stances as stancesRepo,
   type FoundryItemRow,
+  regression,
 } from '@xbam/database';
 import { syncPersonaSource } from '@xbam/persona';
 import type { CurrentAgent } from './foundry';
@@ -132,6 +133,7 @@ export async function applyFoundry(input: { runId: string; userId: string }): Pr
     draft.changeNote = `Agent Foundry: ${personaFields.length} change${personaFields.length === 1 ? '' : 's'} accepted from a research run.`;
     const saved = await agentsRepo.savePersonaVersion(agentId, PersonaDraft.parse(draft), input.userId);
     report.personaVersion = saved.version;
+    await regression.noteChange(agentId, 'PERSONA');
   }
 
   // ── Policy: one new version for autonomy and learning ──
@@ -155,6 +157,7 @@ export async function applyFoundry(input: { runId: string; userId: string }): Pr
     }
     const saved = await agentsRepo.savePolicyVersion(agentId, PolicyConfig.parse(config), 'Agent Foundry', input.userId);
     report.policyVersion = saved.version;
+    await regression.noteChange(agentId, 'POLICY');
   }
 
   // ── Beliefs ──

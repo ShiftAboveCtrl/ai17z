@@ -5,6 +5,7 @@ import { useElapsed, useResource } from '@app/lib/hooks';
 import { ChoiceGroup, ChoiceOption, EmptyState, Field, Spinner, Working } from '@app/components/ui';
 import { Panel } from './shared';
 import { ReplyInspector } from '@app/components/ReplyInspector';
+import { RegressionLibrary, SaveRegressionCase } from '@app/components/RegressionLab';
 
 /**
  * The Response Lab.
@@ -43,6 +44,7 @@ interface TaskRow {
 
 
 export function LabView({ agentId }: { agentId: string }) {
+  const [revision, setRevision] = useState(0);
   const [mode, setMode] = useState<'typed' | 'post'>('typed');
   const [text, setText] = useState('');
   const [handle, setHandle] = useState('');
@@ -174,6 +176,8 @@ export function LabView({ agentId }: { agentId: string }) {
       )}
 
       {jobId && <ReplyInspector agentId={agentId} jobId={jobId} />}
+      {jobId && <SaveRegressionCase key={jobId} agentId={agentId} jobId={jobId} onSaved={() => setRevision(n => n + 1)} />}
+      <RegressionLibrary agentId={agentId} revision={revision} />
 
       {!jobId && !taskId && !busy && (
         <div className="mt-8">

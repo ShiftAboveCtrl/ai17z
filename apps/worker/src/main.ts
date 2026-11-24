@@ -14,6 +14,7 @@ import {
 import { JobWorker, capabilitiesFor, type WorkerRole } from '@xbam/jobs';
 import {
   bootstrapRuntime,
+  sweepRegressions,
   sweepCapabilityApprovals,
   deliverNotifications,
   indexSource,
@@ -118,6 +119,7 @@ async function main(): Promise<void> {
    * stuck row needs a database, not a browser.
    */
   const sweep = async () => {
+    if (capabilities.jobsCapable) await sweepRegressions().catch(error => log.warn('regression sweep failed', { message: errorMessage(error) }));
     try {
       const freed = await browserTasks.recoverStaleBrowserTasks();
       if (freed.abandoned > 0 || freed.unclaimed > 0) log.info('freed stuck browser tasks', freed);

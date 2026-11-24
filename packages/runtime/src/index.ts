@@ -255,3 +255,4 @@ export * from './studioCoinAlerts';
 export * from './evidenceFollowUp';
 export * from './evidenceFollowUpOffer';
 export * from './capabilityApprovals';
+export * from './regression';

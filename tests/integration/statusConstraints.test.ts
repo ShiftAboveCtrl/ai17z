@@ -44,6 +44,15 @@ import { uniqueSuffix } from '../support/db';
 
 installHarness();
 
+it('accepts regression triggers and refuses an unknown trigger', async () => {
+  const f = await createFixture();
+  for (const trigger of ['MANUAL', 'PERSONA', 'POLICY', 'MODEL', 'PREVIEW']) {
+    const rows = await query<{ id: string }>('INSERT INTO agent_regression_runs(agent_id,trigger,finished_at) VALUES($1,$2,now()) RETURNING id', [f.agentId, trigger]);
+    expect(rows).toHaveLength(1);
+  }
+  await expect(query("INSERT INTO agent_regression_runs(agent_id,trigger) VALUES($1,'AUTOMATIC')", [f.agentId])).rejects.toThrow(/check constraint/);
+});
+
 it('accepts every capability approval vocabulary and enforces its unique execution key', async () => {
   const f = await createFixture();
   const insert = async (status: string, source: string, audience = 'PUBLIC') => query<{ id: string }>(

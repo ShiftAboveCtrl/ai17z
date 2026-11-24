@@ -14,7 +14,7 @@
  * never PASS on the strength of a pattern.
  */
 import { NotFoundError } from '@xbam/shared';
-import { agents as agentsRepo, foundry as foundryRepo, jobs as jobsRepo, research as researchRepo, testSuites, type TestCaseRecord } from '@xbam/database';
+import { agents as agentsRepo, foundry as foundryRepo, jobs as jobsRepo, research as researchRepo, testSuites, regression, type TestCaseRecord } from '@xbam/database';
 import { behaviouralTests, type BehaviouralTest } from './foundry';
 import { explainRehearsal, rehearse } from './rehearse';
 import { socialVoiceTests } from './socialTests';
@@ -93,12 +93,13 @@ async function casesFor(agentId: string, foundryRunId: string | null): Promise<{
 }
 
 /** Starts a suite: one rehearsal per case, each from an author of its own so no case trips another's limits. */
-export async function startTestSuite(input: { agentId: string; requestedBy: string | null; foundryRunId?: string | null }) {
-  const found = await casesFor(input.agentId, input.foundryRunId ?? null);
+export async function startTestSuite(input: { agentId: string; requestedBy: string | null; foundryRunId?: string | null; source?: 'saved' }) {
+  const saved = input.source === 'saved' ? await regression.listCases(input.agentId) : null;
+  const found = saved ? { runId: null, tests: saved.map(c => ({ id: c.id, category: 'Saved case', title: c.title, message: c.subject.text, expect: 'Meet the saved checks.', checks: c.checks })) } : await casesFor(input.agentId, input.foundryRunId ?? null);
   const runId = found.runId;
   // The setup's own situations, then the everyday ones every social agent meets.
   const ids = new Set(found.tests.map((t) => t.id));
-  const tests = [...found.tests, ...socialVoiceTests().filter((t) => !ids.has(t.id))];
+  const tests = saved ? found.tests : [...found.tests, ...socialVoiceTests().filter((t) => !ids.has(t.id))];
   if (tests.length === 0) throw new NotFoundError('Anything to test');
   const cases: TestCaseRecord[] = [];
   for (const test of tests) {
@@ -107,7 +108,7 @@ export async function startTestSuite(input: { agentId: string; requestedBy: stri
         agentId: input.agentId,
         accountId: null,
         requestedBy: input.requestedBy,
-        subject: { channel: 'mock', authorHandle: `tester_${test.id.replace(/[^a-z0-9]/gi, '').slice(0, 7)}`, text: test.message },
+        subject: { ...saved?.find(c => c.id === test.id)?.subject, channel: 'mock', authorHandle: `tester_${test.id.replace(/[^a-z0-9]/gi, '').slice(0, 7)}`, text: test.message, occurredAt: new Date().toISOString() },
       });
       cases.push({ id: test.id, category: test.category, title: test.title, message: test.message, expect: test.expect, checks: test.checks, jobId: run.jobId, error: null });
     } catch (error) {

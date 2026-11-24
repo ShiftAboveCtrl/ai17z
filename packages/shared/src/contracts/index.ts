@@ -55,3 +55,4 @@ export * from './studioNarrativePulse';
 export * from './studioRisk';
 export * from './studioCoinAlerts';
 export * from './evidenceFollowUp';
+export * from './regression';

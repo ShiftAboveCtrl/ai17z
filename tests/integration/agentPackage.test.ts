@@ -7,6 +7,7 @@ import {
   pipelines as pipelinesRepo,
   providers as providersRepo,
   query,
+  regression,
 } from '@xbam/database';
 import {
   AGENT_PACKAGE_EXTENSION,
@@ -27,6 +28,21 @@ import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
 import { uniqueSuffix } from '../support/db';
 import { fixtureBytes } from '../support/imageFixtures';
+
+it('excludes retained third-party regression subjects from SHARE and MOVE', async () => {
+  const fixture = await createFixture();
+  const { rehearse, saveRegressionCase } = await import('@xbam/runtime');
+  const { drainJobs } = await import('../support/runner');
+  const run = await rehearse({ agentId: fixture.agentId, subject: { channel: 'mock', authorHandle: 'reader', text: 'Private regression subject zq942' } });
+  await drainJobs();
+  await saveRegressionCase({ agentId: fixture.agentId, jobId: run.jobId, title: 'Retained case zq942', checks: {}, createdBy: fixture.ownerId });
+  expect(await regression.listCases(fixture.agentId)).toHaveLength(1);
+  for (const mode of ['SHARE', 'MOVE'] as const) {
+    const text = serialisePackage(await packAgent(fixture.agentId, mode));
+    expect(text).not.toContain('zq942');
+    expect(text).not.toContain('agent_regression');
+  }
+});
 
 installHarness();
 
