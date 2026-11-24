@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import {
-  agents, capabilityInvocations, capabilityPermissions, deliberation as mind,
+  accounts, agents, capabilityApprovals, capabilityInvocations, capabilityPermissions, deliberation as mind,
   observability, providers, query,
 } from '@xbam/database';
 import { DEFAULT_POLICY } from '@xbam/shared/contracts';
@@ -34,7 +34,7 @@ beforeEach(async () => {
 });
 afterEach(() => { resetCapabilitiesForTest(); vi.restoreAllMocks(); });
 
-async function planningAgent(autonomy: 'ACT' | 'SUGGEST' | 'THINK' = 'ACT', repeat = false) {
+async function planningAgent(autonomy: 'ACT' | 'SUGGEST' | 'THINK' | 'OBSERVE' = 'ACT', repeat = false) {
   const f = await createFixture({ policy: { tools: { ...DEFAULT_POLICY.tools, capabilityLoop: true } } });
   await agents.updateAgent(f.agentId, { state: 'ACTIVE' });
   await mind.setWake(f.agentId, { enabled: true, autonomy });
@@ -99,20 +99,62 @@ describe('a goal becomes a bounded plan on a worker wake', () => {
     expect((await mind.listGoals(f.agentId))[0]!.progress).toBe(0);
   });
 
-  it('PAUSE ALL prevents even creating a plan', async () => {
-    const f = await planningAgent();
+  it.each(['ACT', 'THINK', 'SUGGEST'] as const)('PAUSE ALL at %s prevents even creating a plan', async autonomy => {
+    const f = await planningAgent(autonomy);
     await setPauseAll({ paused: true, by: null });
     await wakeAgent(f.agentId, { mayResearch: true });
     expect(await planFor(f.agentId)).toBeNull();
     expect(runs).toBe(0);
   });
 
-  it.each(['THINK', 'SUGGEST'] as const)('at %s proposes one step and stops without failing', async autonomy => {
-    const f = await planningAgent(autonomy, true);
+  it.each(['THINK', 'SUGGEST'] as const)('at %s reads, then proposes a write and ends the attempt', async autonomy => {
+    const f = await planningAgent(autonomy);
+    const account = await accounts.createAccount({ ownerId: f.ownerId, channel: 'mock', handle: 'goal-reader' });
+    let writes = 0;
+    registerCapability(defineCapability({
+      id: 'test.publish', name: 'Publish time', description: 'Publish the current time.',
+      category: 'CREATE', effect: 'WRITE', risk: 'LOW', modelCallable: true,
+      input: z.object({ now: z.string() }), output: z.object({ ok: z.boolean() }), timeoutMs: 1000,
+      async run() { writes += 1; return { ok: true }; },
+    }));
+    await capabilityPermissions.set({ agentId: f.agentId, capabilityId: 'test.publish', permission: 'ALLOWED' });
+    let turns = 0;
+    vi.spyOn(getAdapter('mock'), 'generate').mockImplementation(async request => {
+      turns += 1;
+      const read = request.messages.some(m => m.role === 'system' && m.content.includes('test.clock returned:') && m.content.includes('noon'));
+      return { text: read ? '<use-capability>{"id":"test.publish","input":{"now":"noon"}}</use-capability>'
+        : '<use-capability>{"id":"test.clock","input":{}}</use-capability>',
+      requestId: null, promptTokens: null, completionTokens: null, raw: null };
+    });
+    await pursueGoal(f.agentId, account.id);
+    expect(runs).toBe(1);
+    expect(writes).toBe(0);
+    expect(turns).toBe(2);
+    expect(await planFor(f.agentId)).toMatchObject({ state: 'PROPOSED', steps: [
+      { capabilityId: 'test.clock', outcome: 'SUCCEEDED' },
+      { capabilityId: 'test.publish', outcome: 'PROPOSED', input: { now: 'noon' } },
+    ] });
+    const invocations = await capabilityInvocations.listForAgent(f.agentId);
+    expect(invocations).toHaveLength(1);
+    expect(invocations[0]).toMatchObject({ capabilityId: 'test.clock', outcome: 'SUCCEEDED', output: { now: 'noon' } });
+    const approvals = await capabilityApprovals.listForAgent(f.agentId);
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0]).toMatchObject({ capabilityId: 'test.publish', status: 'PENDING', source: 'GOAL_PLAN', input: { now: 'noon' } });
+    const attempts = await query('SELECT state, finished_at FROM agent_goal_attempts WHERE goal_id=$1', [f.goalId]);
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]).toMatchObject({ state: 'PROPOSED', finished_at: expect.anything() });
+    const traces = (await observability.listAgentTrace(f.agentId)).filter(t => t.data.goalId === f.goalId);
+    expect(traces).toHaveLength(2);
+    expect(traces.map(t => [t.data.step, t.data.outcome]).sort()).toEqual([[1, 'SUCCEEDED'], [2, 'PROPOSED']]);
+  });
+
+  it('at OBSERVE creates no plan and runs nothing', async () => {
+    const f = await planningAgent('OBSERVE');
     await wakeAgent(f.agentId, { mayResearch: true });
+    expect(await planFor(f.agentId)).toBeNull();
     expect(runs).toBe(0);
-    expect(await planFor(f.agentId)).toMatchObject({ state: 'PROPOSED', steps: [{ outcome: 'PROPOSED' }] });
-    expect(await capabilityInvocations.listForAgent(f.agentId)).toHaveLength(0);
+    expect(await capabilityInvocations.listForAgent(f.agentId)).toEqual([]);
+    expect(await capabilityApprovals.listForAgent(f.agentId)).toEqual([]);
   });
 
   it('ends an unbounded request at the step budget with a recorded sentence', async () => {
@@ -145,13 +187,13 @@ describe('a goal becomes a bounded plan on a worker wake', () => {
     expect(await planFor(f.agentId)).toMatchObject({ state: 'STOPPED', summary: 'Everything is paused.' });
   });
 
-  it('an autonomy downgrade during a plan proposes the next step and stops', async () => {
+  it('an autonomy downgrade to SUGGEST keeps reading within the step budget', async () => {
     const f = await planningAgent('ACT', true);
     afterRun = async () => { await mind.setWake(f.agentId, { autonomy: 'SUGGEST' }); };
     await wakeAgent(f.agentId, { mayResearch: true });
-    expect(runs).toBe(1);
-    expect(await planFor(f.agentId)).toMatchObject({ state: 'PROPOSED', steps: [
-      { outcome: 'SUCCEEDED' }, { outcome: 'PROPOSED' },
+    expect(runs).toBe(3);
+    expect(await planFor(f.agentId)).toMatchObject({ state: 'EXHAUSTED', steps: [
+      { outcome: 'SUCCEEDED' }, { outcome: 'SUCCEEDED' }, { outcome: 'SUCCEEDED' },
     ] });
   });
 
