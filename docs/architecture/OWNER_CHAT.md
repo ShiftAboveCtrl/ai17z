@@ -6,7 +6,8 @@ beliefs, through the prompt engine (`chat.owner`, built from the reply
 layers), the model gateway and the capability loop. Nothing in chat keeps a
 copy of agent state.
 
-Code: `packages/runtime/src/ownerChat.ts`, `introspectionCapabilities.ts`,
+Code: `packages/runtime/src/ownerChat.ts`, `roomDelegation.ts`,
+`delegationCapability.ts`, `introspectionCapabilities.ts`,
 `setupCheck.ts`; `packages/database/src/repositories/chat.ts`,
 `introspection.ts`; `apps/api/src/routes/chat.ts`; `apps/web/src/routes/ChatPage.tsx`.
 Migration 0100.
@@ -67,6 +68,47 @@ transcript is the only thing they share. Answers are queued only from an owner
 message and never from an answer, so two agents cannot talk to each other for
 ever. A shared conclusion reaches other agents only when the owner saves it to
 them.
+
+### Bounded delegation
+
+`room.delegate` lets an agent ask another participant in the same owner room
+one bounded question. It is registered at bootstrap, declares `audience:
+'OWNER'`, and uses the existing capability permissions and approval refusal.
+It defaults to asking for owner approval. An owner must allow it in capability
+settings before it can run; an approval requirement is never treated as consent.
+It is never offered publicly or on a delegated turn.
+
+The runtime binds the room and original owner answer. Model input contains
+only a participant id and a task of at most 1,200 characters. The original turn
+receives eligible participant ids and names so it can choose a real target. Membership and
+ownership are checked again before execution. A durable claim on the original
+answer allows one delegation, including across a worker retry. The delegate
+cannot delegate, and the task has a 45-second deadline, with five more seconds
+in the capability timeout for settlement. A late model result cannot publish.
+
+The delegate enters `writeAnswer` afresh, loading its own persona, policy,
+beliefs, memories, model and capability settings. Neither the delegator's
+prompt nor its retrieved memory is passed. The delegate receives the bounded
+question, without a transcript or owner-command origin. Changing settings
+therefore cannot borrow the original owner's authority. Its answer is checked
+against its own output policy before it is returned or recorded.
+
+Delegated work requires an active agent, enabled wake with ACT autonomy,
+AUTONOMOUS policy and enabled capability loop. These gates, PAUSE ALL and
+current permissions are rechecked before model calls and capability execution.
+A policy or persona version change ends the attempt. A failed gate or a
+capability awaiting approval stops it with a sentence. It never silently
+inherits the delegator's permissions. Research uses the delegate's existing
+lookup path; a browser handoff ends this attempt without queuing another turn.
+
+The result is a settled room message attributed to the delegate, linked to the
+original owner message. It never enters the answer queue and cannot be retried
+as an owner turn. Both sides have linked record jobs and `CAPABILITY_USED`
+traces with sentence reasons. These jobs use the internal HTTP channel and
+`NONE` action, are terminal while inline work runs, and cannot be claimed by
+the ordinary pipeline. No new status or trace enum is introduced. Delegate
+evidence stays on its own message; the delegator receives only validated speech
+and the outcome sentence. Saving that speech to memory still requires the owner.
 
 ## Where it runs
 

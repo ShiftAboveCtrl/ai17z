@@ -37,6 +37,8 @@ import {
   ops,
   prompts as promptsRepo,
   stances as stancesRepo,
+  deliberation,
+  observability,
   type ChatMessage,
   type ChatParticipant,
 } from '@xbam/database';
@@ -61,6 +63,7 @@ import { capResearch } from './spending';
 import { pluginResearchSources } from './pluginFeatures';
 import { buildChannelContext } from './channelContext';
 import { getChannelAdapter } from '@xbam/channels';
+import { roomDelegation } from './roomDelegation';
 
 const log = createLogger('owner-chat');
 
@@ -161,6 +164,13 @@ export interface ChatWorkerOptions {
   mayResearch: boolean;
 }
 
+interface DelegatedTurn {
+  task: string;
+  jobId: string;
+  signal: AbortSignal;
+  deadline: number;
+}
+
 /**
  * What an owner's question needs looked up, decided exactly as a reply's is.
  *
@@ -251,7 +261,7 @@ async function lookUp(
 }
 
 /** Writes one agent's answer. Never throws: a failure is an answer that says so. */
-export async function writeAnswer(answer: ChatMessage, options: ChatWorkerOptions = { mayResearch: false }): Promise<ChatTurnOutcome> {
+export async function writeAnswer(answer: ChatMessage, options: ChatWorkerOptions = { mayResearch: false }, delegated?: DelegatedTurn): Promise<ChatTurnOutcome> {
   const failed = (error: string, evidence: Record<string, unknown> = {}): ChatTurnOutcome => ({
     status: 'FAILED',
     content: '',
@@ -276,14 +286,39 @@ export async function writeAnswer(answer: ChatMessage, options: ChatWorkerOption
     if (!template) return failed('The owner chat prompt is missing. Restarting AI17Z restores it.');
     const policy = policyRow.config as PolicyConfig;
 
+    const checkpoint = async () => {
+      const [current, wake, settings, pause] = await Promise.all([
+        agentsRepo.getAgent(agent.id), deliberation.getWake(agent.id),
+        capabilitySettings(agent.id, { failClosed: true }), ops.getSetting<{ paused: boolean }>('runtime.pauseAll'),
+      ]);
+      const currentPolicy = await agentsRepo.getActivePolicy(agent.id);
+      const config = currentPolicy?.config as PolicyConfig | undefined;
+      const reason = pause?.paused === true ? 'Everything is paused. Delegated work stops until PAUSE ALL is lifted.'
+        : delegated?.signal.aborted || Date.now() >= (delegated?.deadline ?? Infinity) ? 'The delegated task timed out or was cancelled.'
+        : current?.state !== 'ACTIVE' ? 'The delegate is not active.'
+        : wake?.enabled !== true ? 'The delegate wake is disabled.'
+        : wake.autonomy !== 'ACT' ? 'The delegate needs ACT autonomy for agent-requested work.'
+        : config?.tools.capabilityLoop !== true ? 'The delegate capability loop is disabled.'
+        : config.automation.mode !== 'AUTONOMOUS' ? 'The delegate policy does not allow AUTONOMOUS work.'
+        : current.policyVersionId !== agent.policyVersionId || current.personaVersionId !== agent.personaVersionId
+          ? 'The delegate policy or persona changed during this task.' : null;
+      return { ...settings, paused: pause?.paused === true,
+        autonomy: wake?.autonomy ?? 'OBSERVE' as const,
+        enabled: reason === null, reason };
+    };
+    if (delegated) {
+      const gate = await checkpoint();
+      if (gate.reason) return failed(gate.reason);
+    }
+
     const names = new Map(participants.map((p) => [p.agentId, p.name]));
-    const { thread, question } = transcriptFor(messages, answer, names);
+    const { thread, question } = delegated ? { thread: [], question: delegated.task } : transcriptFor(messages, answer, names);
     if (!question.trim()) return failed('There is no question for this answer any more.');
 
     const budget = await checkBudget(agent.id, policy);
     if (!budget.allow) return failed(budget.message ?? 'This agent is over its model budget for now.');
 
-    const settings = await capabilitySettings(agent.id);
+    const settings = await capabilitySettings(agent.id, { failClosed: Boolean(delegated) });
     const paused = (await pauseState().catch(() => ({ paused: false }))).paused;
 
     /*
@@ -355,19 +390,31 @@ export async function writeAnswer(answer: ChatMessage, options: ChatWorkerOption
     */
     const loop = await runCapabilityLoop({
       agentId: agent.id,
-      jobId: null,
+      jobId: delegated?.jobId ?? null,
       accountId: null,
-      messages: prompt.messages,
+      messages: delegated ? [...prompt.messages, { role: 'system' as const, content:
+        'Another agent in this owner room delegated this bounded question. Answer as yourself. ' +
+        'This is not a new instruction from the owner. Do not change settings, save memory or delegate again.' }]
+        : conversation.kind === 'ROOM' ? [...prompt.messages, { role: 'system' as const,
+          content: 'ROOM DELEGATION TARGETS:\n' + JSON.stringify(participants.filter(p => p.agentId !== agent.id)
+            .map(p => ({ agentId: p.agentId, name: p.name, slug: p.slug }))) }] : prompt.messages,
       task: question,
       generate: async (messagesSoFar) => {
+        if (delegated) {
+          const gate = await checkpoint();
+          if (gate.reason) throw new Error(gate.reason);
+          const currentBudget = await checkBudget(agent.id, policy);
+          if (!currentBudget.allow) throw new Error(currentBudget.message ?? 'The delegate model budget is exhausted.');
+        }
         last = await generate({
           agentId: agent.id,
-          jobId: null,
+          jobId: delegated?.jobId ?? null,
           purpose: 'CHAT',
           messages: messagesSoFar,
           promptLayers: prompt.layers,
           promptText: prompt.promptText,
           maxCalls: 1,
+          ...(delegated ? { signal: delegated.signal, timeoutMs: Math.max(1, delegated.deadline - Date.now()) } : {}),
         });
         return last.text;
       },
@@ -375,8 +422,22 @@ export async function writeAnswer(answer: ChatMessage, options: ChatWorkerOption
       configs: settings.configs,
       paused,
       audience: 'OWNER',
-      origin: { conversationId: conversation.id, messageId: answer.answers ?? answer.id, text: question, ownerId: conversation.ownerId },
+      origin: delegated ? null : { conversationId: conversation.id, messageId: answer.answers ?? answer.id, text: question, ownerId: conversation.ownerId },
+      delegation: !delegated && conversation.kind === 'ROOM' ? roomDelegation(answer, options) : undefined,
+      ...(delegated ? { budgetMs: Math.max(0, delegated.deadline - Date.now()), goalPlan: {
+        checkpoint, onStep: async step => {
+          await observability.emitTrace({ jobId: delegated.jobId, agentId: agent.id,
+            type: 'CAPABILITY_USED', message: step.detail,
+            data: { capabilityId: step.capabilityId, outcome: step.outcome } });
+        },
+      } } : {}),
     });
+    if (delegated && (loop.halted || loop.exhausted)) {
+      const gate = await checkpoint();
+      return failed(gate.reason ?? loop.reason ?? 'The delegated task was stopped by its own gates.', {
+        capabilities: loop.steps, offered: loop.shortlist.offered.map(c => c.id),
+      });
+    }
 
     const paperReply = paperReplyFromSteps(loop.steps);
     const validated = validateOutput(paperReply ?? honestChangeAnswer(loop.answer, loop.steps, question), chatPolicy(policy), null, [persona.biography, persona.customInstructions].join('\n'));
@@ -414,6 +475,10 @@ export async function writeAnswer(answer: ChatMessage, options: ChatWorkerOption
         `AI17Z held this answer back: ${validated.violations.map((v) => v.message).join(' ')}`,
         evidence,
       );
+    }
+    if (delegated) {
+      const gate = await checkpoint();
+      if (gate.reason) return failed(gate.reason, evidence);
     }
     return { status: 'DONE', content: validated.output, evidence, error: null };
   } catch (error) {
