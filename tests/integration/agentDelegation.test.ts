@@ -1,7 +1,8 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { agents, capabilityPermissions, chat, deliberation, jobs, memories, query } from '@xbam/database';
+import { accounts, agents, capabilityPermissions, chat, deliberation, jobs, memories, observability, query } from '@xbam/database';
 import { answerNextChatTurn, DELEGATION_TIMEOUT_MS, registerIntrospectionCapabilities, registerDelegationCapability, runCapabilityLoop, setPauseAll } from '@xbam/runtime';
 import { getCapability, invokeCapability } from '@xbam/tools';
+import { xAdapter } from '../../packages/channels/src/x';
 import { roomDelegation } from '../../packages/runtime/src/roomDelegation';
 import { mockAdapter } from '../../packages/models/src/providers/mock';
 import { generate } from '@xbam/models';
@@ -59,6 +60,7 @@ describe('room delegation', () => {
     await memories.writeMemory({ agentId: first.agentId, scope: 'KNOWLEDGE', memoryType: 'FACT', content: 'The launch codename is Heron.', importance: 1 });
     await memories.writeMemory({ agentId: second.agentId, scope: 'KNOWLEDGE', memoryType: 'FACT', content: 'The launch codename is Kestrel.', importance: 1 });
     const room = await chat.createConversation({ ownerId: first.ownerId, kind: 'ROOM', title: 'Research', agentIds: [first.agentId, second.agentId] });
+    await chat.postOwnerMessage({ conversationId: room.id, content: 'Room transcript secret: violet-orchid-vault.', answerers: [] });
     await chat.postOwnerMessage({ conversationId: room.id, content: 'Delegate the launch codename question to the other agent.', answerers: [first.agentId] });
     const seen: string[] = [];
     const senderSeen: string[] = [];
@@ -82,6 +84,8 @@ describe('room delegation', () => {
     expect(seen.join('\n')).toContain('Kestrel');
     expect(seen.join('\n')).toContain('I am the room researcher.');
     expect(seen.join('\n')).not.toContain('Heron');
+    expect(senderSeen[0]).toContain('violet-orchid-vault');
+    expect(seen.join('\n')).not.toContain('violet-orchid-vault');
     expect(senderSeen[0]).toContain('Heron');
     expect(senderSeen[0]).not.toContain('Kestrel');
     expect(messages.filter(m => m.authorKind === 'AGENT')).toHaveLength(2);
@@ -279,15 +283,99 @@ describe('room delegation', () => {
     expect(await answerNextChatTurn('worker')).toBe(false);
   });
 
-  it('persists the one-turn claim across a worker retry', async () => {
+  it('allows an owner retry of a failed answer to delegate again', async () => {
     const { first, second, room, answer } = await setupRoom();
-    const claimed = await chat.claimNextAnswer('worker', 60_000);
-    expect(claimed?.id).toBe(answer.id);
+    await chat.claimNextAnswer('worker', 60_000);
     expect(await chat.claimDelegation(answer.id, second.agentId)).toBe(true);
     await chat.settleAnswer(answer.id, 'worker', { status: 'FAILED', content: '', evidence: {}, error: 'Interrupted.' });
     await chat.requeueAnswer(first.ownerId, answer.id);
-    const retried = await chat.claimNextAnswer('worker', 60_000);
-    await expect(roomDelegation(retried!, { mayResearch: false }).run(second.agentId, 'What is your setup?', new AbortController().signal)).rejects.toThrow(/already used/);
+    scripted(second.agentId, () => 'The fresh turn can delegate.');
+    await answerNextChatTurn('retry-worker');
+    expect((await delegateMessage(room.id, second.agentId))?.content).toBe('The fresh turn can delegate.');
+  });
+
+  it('preserves the one-turn claim when another worker takes over an expired lease', async () => {
+    const { second, room, answer } = await setupRoom();
+    await chat.claimNextAnswer('crashed-worker', 60_000);
+    expect(await chat.claimDelegation(answer.id, second.agentId)).toBe(true);
+    await query("UPDATE chat_messages SET lock_expires_at = now() - interval '1 second' WHERE id = $1", [answer.id]);
+    const taken = await chat.claimNextAnswer('takeover-worker', 60_000);
+    expect(taken?.id).toBe(answer.id);
+    expect((await query<{ locked_by: string }>('SELECT locked_by FROM chat_messages WHERE id = $1', [answer.id]))[0]?.locked_by).toBe('takeover-worker');
+    await expect(roomDelegation(taken!, { mayResearch: false }).run(second.agentId, 'What is your setup?', new AbortController().signal)).rejects.toThrow(/already used/);
     expect((await chat.listMessages(room.id)).filter(m => m.agentId === second.agentId)).toEqual([]);
+  });
+
+  it('omits delegation targets when the agent permission is disabled', async () => {
+    const { first, second } = await setupRoom();
+    await capabilityPermissions.set({ agentId: first.agentId, capabilityId: 'room.delegate', permission: 'DISABLED' });
+    const prompts: string[] = [];
+    scripted(second.agentId, () => 'Unused.');
+    vi.spyOn(mockAdapter, 'generate').mockImplementation(async request => {
+      prompts.push(request.messages.map(m => m.content).join('\n'));
+      return { text: 'An ordinary answer.', requestId: 'test', promptTokens: 10, completionTokens: 10, raw: {} };
+    });
+    await answerNextChatTurn('worker');
+    expect(prompts.join('\n')).not.toContain('ROOM DELEGATION TARGETS');
+    expect(prompts.join('\n')).not.toContain(second.agentId);
+  });
+
+  it.each(['message', 'job', 'trace'] as const)('settles and traces both record jobs after a %s write failure', async failure => {
+    const { second, answer } = await setupRoom();
+    await chat.claimNextAnswer('worker', 60_000);
+    scripted(second.agentId, () => 'A validated delegate answer.');
+    if (failure === 'message') vi.spyOn(chat, 'postDelegatedAnswer').mockRejectedValueOnce(new Error('Injected message write failure.'));
+    if (failure === 'job') {
+      const update = jobs.updateJob;
+      vi.spyOn(jobs, 'updateJob').mockImplementationOnce(update).mockImplementationOnce(update)
+        .mockRejectedValueOnce(new Error('Injected job write failure.'));
+    }
+    if (failure === 'trace') {
+      const emit = observability.emitTrace;
+      let injected = false;
+      vi.spyOn(observability, 'emitTrace').mockImplementation(async event => {
+        if (!injected && event.data?.side) { injected = true; throw new Error('Injected trace write failure.'); }
+        return emit(event);
+      });
+    }
+    await expect(roomDelegation(answer, { mayResearch: false }).run(second.agentId, 'What is your setup?', new AbortController().signal)).rejects.toThrow(/Injected/);
+    const records = await query<{ id: string; status: string; last_error: string }>('SELECT id, status, last_error FROM jobs');
+    expect(records).toHaveLength(2);
+    expect(records.every(r => r.status === 'PERMANENT_FAILURE' && /Injected/.test(r.last_error))).toBe(true);
+    const traces = await query<{ job_id: string; message: string }>("SELECT job_id, message FROM trace_events WHERE data->>'capabilityId' = 'room.delegate'");
+    expect(traces.map(t => t.job_id).sort()).toEqual(records.map(r => r.id).sort());
+    expect(traces.every(t => /Injected/.test(t.message))).toBe(true);
+  });
+
+  it('aborts pending browser research at the delegation deadline without publishing an answer', async () => {
+    const { first, second, room, answer } = await setupRoom();
+    await chat.claimNextAnswer('worker', 60_000);
+    const account = await accounts.createAccount({ ownerId: first.ownerId, channel: 'x', handle: 'research-test' });
+    await accounts.linkAgentAccount({ agentId: second.agentId, accountId: account.id, triggerEventTypes: ['MENTION'], actionType: 'REPLY' });
+    let entered: (() => void) | undefined;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    let aborted = false;
+    let release: (() => void) | undefined;
+    // The adapter boundary is faked so this test cannot open a real X session.
+    vi.spyOn(xAdapter, 'lookUp').mockImplementation(async (_ctx, request) => {
+      const signal = request.signal;
+      return new Promise(resolve => {
+        release = () => resolve([]);
+        signal?.addEventListener('abort', () => { aborted = true; resolve([]); }, { once: true });
+        entered!();
+      });
+    });
+    scripted(second.agentId, () => 'Research must never reach generation.');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const turn = roomDelegation(answer, { mayResearch: true }).run(second.agentId, 'What happened today in robotics?', new AbortController().signal);
+    await started;
+    await vi.advanceTimersByTimeAsync(DELEGATION_TIMEOUT_MS);
+    vi.useRealTimers();
+    await turn;
+    release!();
+    expect(aborted).toBe(true);
+    expect((await delegateMessage(room.id, second.agentId))?.content).toBe('');
+    expect((await delegateMessage(room.id, second.agentId))?.error).toMatch(/timed out/);
+    expect(await query('SELECT id FROM model_calls WHERE agent_id = $1', [second.agentId])).toEqual([]);
   });
 });

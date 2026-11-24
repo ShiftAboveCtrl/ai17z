@@ -264,7 +264,7 @@ export async function requeueAnswer(ownerId: string, answerId: string): Promise<
   return mapRow<ChatMessage>(
     await queryOne(
       `UPDATE chat_messages m SET status = 'PENDING', error = NULL, content = '',
-              evidence = CASE WHEN m.evidence ? 'delegationAttempt' THEN jsonb_build_object('delegationAttempt', m.evidence->'delegationAttempt') ELSE '{}'::jsonb END,
+              evidence = '{}'::jsonb,
               locked_by = NULL, lock_expires_at = NULL, answered_at = NULL
          FROM chat_conversations c
         WHERE m.id = $1 AND m.conversation_id = c.id AND c.owner_id = $2

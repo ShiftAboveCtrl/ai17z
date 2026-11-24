@@ -11,7 +11,7 @@ import {
   resetCapabilitiesForTest,
   resolvePermission,
 } from '@xbam/tools';
-import { createLogger } from '@xbam/shared';
+import { withCallSignal, createLogger } from '@xbam/shared';
 
 /**
  * The loop that lets a model choose, and every guard that makes that safe.
@@ -344,4 +344,19 @@ describe('whether the loop runs at all', () => {
     const { POLICY_REACHABILITY } = await import('@xbam/shared/contracts');
     expect(POLICY_REACHABILITY['tools.capabilityLoop']?.where).toBe('ADVANCED_ONLY');
   });
+});
+
+it('cancels a nested research capability when its parent turn is aborted', async () => {
+  const controller = new AbortController();
+  let childSignal: AbortSignal | undefined;
+  registerCapability(echo('test.parent_cancel', { run: async (_input, ctx) => {
+    childSignal = ctx.signal;
+    return new Promise(() => {});
+  } }));
+  const pending = withCallSignal(controller.signal, () => invokeCapability({
+    call: { id: 'test.parent_cancel', input: { word: 'hi' } }, context, permission: allowed,
+  }));
+  controller.abort();
+  expect(childSignal?.aborted).toBe(true);
+  expect(await pending).toMatchObject({ outcome: 'TIMED_OUT' });
 });

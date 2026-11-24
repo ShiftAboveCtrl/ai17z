@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { research } from '@xbam/runtime';
 
 const lookup = (query: string) => ({ kind: 'search' as const, query, reason: 'because' });
@@ -73,4 +73,20 @@ describe('research is bounded', () => {
     expect(Date.now() - started).toBeLessThan(50);
     expect(result.note).toMatch(/nothing/i);
   });
+});
+
+it('ends pending research on cancellation and never starts another source', async () => {
+  const controller = new AbortController();
+  const search = vi.fn(never);
+  let entered: (() => void) | undefined;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const options = { signal: controller.signal, budgetMs: 100,
+    search, extraSources: [{ sourceName: 'Pending plugin', lookUp: async () => { entered!(); return never(); } }] };
+  const pending = research([lookup('first'), lookup('second')], options);
+  await started;
+  controller.abort();
+  const result = await pending;
+  expect(search).not.toHaveBeenCalled();
+  expect(result.findings).toEqual([]);
+  expect(result.failed.map(f => f.reason).join(' ')).toMatch(/cancel|abort/i);
 });

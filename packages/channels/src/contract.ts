@@ -276,7 +276,7 @@ export interface ChannelAdapter {
    * has open. Optional: a channel with no browser simply cannot, and the
    * research step reports that as a gap rather than pretending.
    */
-  lookUp?(ctx: ChannelContext, request: { query: string; kind: 'search' | 'link' }): Promise<LookedUp[]>;
+  lookUp?(ctx: ChannelContext, request: { query: string; kind: 'search' | 'link'; signal?: AbortSignal }): Promise<LookedUp[]>;
 
   /**
    * Whether this action already happened on the remote.

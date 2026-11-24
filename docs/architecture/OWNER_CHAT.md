@@ -4,7 +4,10 @@ The owner talking to their own agents, one at a time or several in a room. The
 agent answering is the real one: its persona, identity policy, memories and
 beliefs, through the prompt engine (`chat.owner`, built from the reply
 layers), the model gateway and the capability loop. Nothing in chat keeps a
-copy of agent state.
+copy of agent state. Owner chat can delegate one bounded room task to another
+participant, which reloads its own state and passes its own policy, ACT autonomy
+and capability gates; both jobs record linked traces, and delegated speech
+never becomes an owner instruction.
 
 Code: `packages/runtime/src/ownerChat.ts`, `roomDelegation.ts`,
 `delegationCapability.ts`, `introspectionCapabilities.ts`,
@@ -82,8 +85,10 @@ The runtime binds the room and original owner answer. Model input contains
 only a participant id and a task of at most 1,200 characters. The original turn
 receives eligible participant ids and names so it can choose a real target. Membership and
 ownership are checked again before execution. A durable claim on the original
-answer allows one delegation, including across a worker retry. The delegate
-cannot delegate, and the task has a 45-second deadline, with five more seconds
+answer allows one delegation, including when another worker takes over an expired
+lease. An explicit owner retry of a failed answer starts a fresh turn and clears
+that claim. The delegate cannot delegate, and the task has a 45-second deadline,
+with five more seconds
 in the capability timeout for settlement. A late model result cannot publish.
 
 The delegate enters `writeAnswer` afresh, loading its own persona, policy,
@@ -99,7 +104,9 @@ current permissions are rechecked before model calls and capability execution.
 A policy or persona version change ends the attempt. A failed gate or a
 capability awaiting approval stops it with a sentence. It never silently
 inherits the delegator's permissions. Research uses the delegate's existing
-lookup path; a browser handoff ends this attempt without queuing another turn.
+lookup path under the same abort signal and remaining deadline; cancellation
+closes only the leased RESEARCH page and stops nested Plugin calls. A browser
+handoff ends this attempt without queuing another turn.
 
 The result is a settled room message attributed to the delegate, linked to the
 original owner message. It never enters the answer queue and cannot be retried

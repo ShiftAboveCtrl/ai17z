@@ -236,13 +236,26 @@ export const xAdapter: ChannelAdapter = {
    * needs no search API key. It runs on RESEARCH so a lookup cannot disturb a
    * monitor mid-scroll or a reply mid-compose.
    */
-  async lookUp(ctx: ChannelContext, request: { query: string; kind: 'search' | 'link' }): Promise<LookedUp[]> {
+  async lookUp(ctx: ChannelContext, request: { query: string; kind: 'search' | 'link'; signal?: AbortSignal }): Promise<LookedUp[]> {
+    const signal = request.signal;
+    signal?.throwIfAborted();
     return withSession(ctx, 'RESEARCH', async ({ page }) => {
-      if (request.kind === 'link') {
-        const read = await readPage(page, request.query);
-        return read ? [read] : [];
+      signal?.throwIfAborted();
+      // Closing this leased RESEARCH page interrupts pending Playwright work.
+      // The session and its other tabs belong to independent jobs.
+      let closing: Promise<void> | undefined;
+      const cancel = () => {
+        closing = page.close().catch(error => ctx.logger.warn('Could not close cancelled research page.', { error: errorMessage(error) }));
+      };
+      signal?.addEventListener('abort', cancel, { once: true });
+      try {
+        const found = request.kind === 'link' ? await readPage(page, request.query) : await webSearch(page, request.query);
+        signal?.throwIfAborted();
+        return Array.isArray(found) ? found : found ? [found] : [];
+      } finally {
+        signal?.removeEventListener('abort', cancel);
+        await closing;
       }
-      return webSearch(page, request.query);
     });
   },
 

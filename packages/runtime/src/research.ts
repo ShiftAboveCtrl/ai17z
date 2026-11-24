@@ -912,6 +912,8 @@ export type SearchFn = (query: string) => Promise<Finding[]>;
 
 export interface ResearchOptions {
   search?: SearchFn;
+  /** Cancellation of the turn that requested this research. */
+  signal?: AbortSignal;
   /**
    * Everything the conversation said about which token is meant: the mention,
    * the post above it, the quoted post.
@@ -966,21 +968,25 @@ const DEFAULT_RESEARCH_BUDGET_MS = 60_000;
 /**
  * Give up on a promise that outlives its budget.
  *
- * The underlying work is not cancelled -- a browser navigation cannot be -- but
- * nothing waits on it any more, and the reply goes out saying the lookup did
- * not finish.
+ * The caller passes cancellation to its sources and browser. This race also
+ * bounds a source that ignores cancellation, and the reply reports the gap.
  */
-async function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
+async function withDeadline<T>(work: Promise<T>, ms: number, signal?: AbortSignal): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
   try {
     return await Promise.race([
       work,
       new Promise<never>((_, reject) => {
+        onAbort = () => reject(new Error('The lookup was cancelled.'));
+        signal?.addEventListener('abort', onAbort, { once: true });
+        if (signal?.aborted) onAbort();
         timer = setTimeout(() => reject(new Error('The lookup took too long and was abandoned.')), Math.max(0, ms));
       }),
     ]);
   } finally {
     if (timer) clearTimeout(timer);
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
   }
 }
 
@@ -999,6 +1005,10 @@ export async function research(lookups: Lookup[], options: ResearchOptions = {})
     // Whatever is left when the budget runs out is reported as a gap rather
     // than waited for. The prompt already tells the model to say it could not
     // check, which is a better answer than one that arrives an hour late.
+    if (options.signal?.aborted) {
+      failed.push({ query: lookup.query, reason: 'The lookup was cancelled.' });
+      continue;
+    }
     if (remaining() <= 0) {
       failed.push({ query: lookup.query, reason: 'There was not enough time to look this up.' });
       continue;
@@ -1061,9 +1071,9 @@ export async function research(lookups: Lookup[], options: ResearchOptions = {})
       answering the same question is evidence, and the prompt attributes both.
     */
     for (const source of options.extraSources ?? []) {
-      if (remaining() <= 0) break;
+      if (options.signal?.aborted || remaining() <= 0) break;
       try {
-        const found = await withDeadline(source.lookUp(lookup.query), remaining());
+        const found = await withDeadline(source.lookUp(lookup.query), remaining(), options.signal);
         if (found.length > 0) findings.push(...found);
         else failed.push({ query: lookup.query, reason: `${source.sourceName} had nothing for this.` });
       } catch (error) {
@@ -1071,6 +1081,10 @@ export async function research(lookups: Lookup[], options: ResearchOptions = {})
       }
     }
 
+    if (options.signal?.aborted) {
+      failed.push({ query: lookup.query, reason: 'The lookup was cancelled.' });
+      continue;
+    }
     if (!options.search) {
       // Not a gap when a Plugin already answered this one. "No browser was
       // available" printed beside a finding tells the model its answer is
@@ -1084,7 +1098,7 @@ export async function research(lookups: Lookup[], options: ResearchOptions = {})
       // The search itself has its own internal timeouts, but they add up across
       // page loads, fallbacks and waiting for a browser tab. This is the one
       // that bounds the whole thing.
-      const results = await withDeadline(options.search(lookup.query), remaining());
+      const results = await withDeadline(options.search(lookup.query), remaining(), options.signal);
       if (results.length > 0) findings.push(...results);
       else failed.push({ query: lookup.query, reason: 'The search returned nothing usable.' });
     } catch (error) {

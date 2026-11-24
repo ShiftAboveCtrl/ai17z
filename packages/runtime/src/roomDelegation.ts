@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { agents, chat, events, jobs, observability, withTransaction, type ChatMessage } from '@xbam/database';
 import type { CapabilityContext } from '@xbam/tools';
-import { withCallSignal } from '@xbam/shared';
+import { createLogger, errorMessage, withCallSignal } from '@xbam/shared';
 import { DELEGATION_TIMEOUT_MS } from './delegationCapability';
 import { writeAnswer, type ChatWorkerOptions, type ChatTurnOutcome } from './ownerChat';
+
+const log = createLogger('room-delegation');
 
 async function recordJob(answer: ChatMessage, agentId: string, side: string): Promise<string> {
   const agent = await agents.requireAgent(agentId);
@@ -80,18 +82,42 @@ export function roomDelegation(answer: ChatMessage, options: ChatWorkerOptions):
       const detail = outcome.status === 'DONE'
         ? 'The delegate answered the bounded task as itself using its own state and gates.'
         : `The delegate did not answer. ${outcome.error ?? 'A required gate stopped the task.'}`;
-      await chat.postDelegatedAnswer({
-        conversationId: conversation.id, agentId, ownerMessageId: source.id,
-        status: outcome.status === 'DONE' ? 'DONE' : 'FAILED', content: outcome.content,
-        error: outcome.error, evidence: { ...outcome.evidence, delegatedFrom: answer.id, jobId, parentJobId, task, detail },
-      });
-      for (const [id, actor, otherJobId, side] of [
+      const records = [
         [parentJobId, delegator.id, jobId, 'delegator'], [jobId, agentId, parentJobId, 'delegate'],
-      ] as const) {
-        await jobs.updateJob(id, { status: outcome.status === 'DONE' ? 'EXECUTED' : 'PERMANENT_FAILURE',
-          lastError: outcome.error, validatedOutput: side === 'delegate' ? outcome.content : null });
-        await observability.emitTrace({ jobId: id, agentId: actor, type: 'CAPABILITY_USED', message: detail,
-          data: { capabilityId: 'room.delegate', side, otherJobId, conversationId: conversation.id, answerId: answer.id } });
+      ] as const;
+      let settlementError: { reason: string } | undefined;
+      try {
+        await chat.postDelegatedAnswer({
+          conversationId: conversation.id, agentId, ownerMessageId: source.id,
+          status: outcome.status === 'DONE' ? 'DONE' : 'FAILED', content: outcome.content,
+          error: outcome.error, evidence: { ...outcome.evidence, delegatedFrom: answer.id, jobId, parentJobId, task, detail },
+        });
+        for (const [id, actor, otherJobId, side] of records) {
+          await jobs.updateJob(id, { status: outcome.status === 'DONE' ? 'EXECUTED' : 'PERMANENT_FAILURE',
+            lastError: outcome.error, validatedOutput: side === 'delegate' ? outcome.content : null });
+          await observability.emitTrace({ jobId: id, agentId: actor, type: 'CAPABILITY_USED', message: detail,
+            data: { capabilityId: 'room.delegate', side, otherJobId, conversationId: conversation.id, answerId: answer.id } });
+        }
+      } catch (error) {
+        settlementError = { reason: errorMessage(error) };
+        throw error;
+      } finally {
+        if (settlementError) {
+          const reason = `The delegated answer could not be recorded. ${settlementError.reason}`;
+          // Attempt every record even when another write fails. Trace writes use
+          // their own connections, after each job update has committed.
+          const repairs = await Promise.allSettled(records.map(async ([id, actor, otherJobId, side]) => {
+            try {
+              await jobs.updateJob(id, { status: 'PERMANENT_FAILURE', lastError: reason, validatedOutput: null });
+            } finally {
+              await observability.emitTrace({ jobId: id, agentId: actor, type: 'CAPABILITY_USED', message: reason,
+                data: { capabilityId: 'room.delegate', side, otherJobId, conversationId: conversation.id, answerId: answer.id } });
+            }
+          }));
+          for (const repair of repairs) {
+            if (repair.status === 'rejected') log.warn('Could not settle a room delegation record.', { error: errorMessage(repair.reason) });
+          }
+        }
       }
       // Evidence stays on the delegate's own answer. Only its validated speech
       // returns to the delegator, just as speech in the shared transcript does.
