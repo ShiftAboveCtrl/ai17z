@@ -151,7 +151,6 @@ it('keeps a paused run as a failure with agent_paused and enforces case caps', a
   expect(view.results.every(r => r.error?.includes('agent_paused'))).toBe(true);
 });
 
-
 it('keeps an unaddressed real X rehearsal silent on its first local replay', async () => {
   // The source uses X semantics; only its browser read is replaced with the retained text.
   vi.spyOn(xAdapter, 'resolveContext').mockImplementation(localChannel.resolveContext);

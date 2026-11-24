@@ -41,7 +41,6 @@ it('saves, edits, runs and archives an owned case and refuses cross-owner access
   expect(list.json().data.items).toHaveLength(0);
 });
 
-
 it.each(['easy', 'character', 'learned-persona', 'tool-allow'] as const)('notifies the lab after a %s save', async surface => {
   const f = await createFixture();
   await query('DELETE FROM agent_regression_changes WHERE agent_id=$1', [f.agentId]);
@@ -66,7 +65,6 @@ it.each(['easy', 'character', 'learned-persona', 'tool-allow'] as const)('notifi
   expect(response.statusCode, response.body).toBe(200);
   expect(await regression.changeNotice(f.agentId)).toMatchObject({ pending: true, trigger: surface === 'easy' || surface === 'tool-allow' ? 'POLICY' : 'PERSONA' });
 });
-
 
 it('does not request a regression while the persona editor is autosaving', async () => {
   const f = await createFixture();
