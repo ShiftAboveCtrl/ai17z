@@ -66,7 +66,7 @@ words.
 
 ## Long posts
 
-Each project has a `maxPostChars` (migration 0150): 280 by default, which is
+Each project has a `maxPostChars` (migration 0151): 280 by default, which is
 what every account can post, and settable by the owner from 280 to 25,000 in
 the Rules tab or with `npm run dev-updates -- set <id> --max-post-chars N`. X
 only accepts a post over 280 characters from an account with long posts

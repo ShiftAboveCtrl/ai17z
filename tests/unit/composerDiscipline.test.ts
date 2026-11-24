@@ -297,6 +297,20 @@ describe('a long post, for an account that has long posts', () => {
       }
     });
 
+    it('fails a thread part over 280 characters permanently, as replyOnPage now asks before submit', async () => {
+      vi.useFakeTimers();
+      try {
+        const part = 'b'.repeat(300);
+        const outcome = requirePostButton(disabledButton() as never, part).then(() => null, (error: unknown) => error);
+        await vi.advanceTimersByTimeAsync(11_000);
+        const error = (await outcome) as PipelineError;
+        expect(error.reason).toBe('post_too_long_for_account');
+        expect(error.errorClass).toBe('PERMANENT');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('keeps the old retryable answer for a draft within 280', async () => {
       vi.useFakeTimers();
       try {

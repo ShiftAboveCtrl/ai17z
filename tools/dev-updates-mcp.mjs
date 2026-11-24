@@ -155,7 +155,7 @@ export const TOOLS = [
   {
     name: 'dev_update_rules',
     title: 'How this project posts',
-    description: 'Whether updates wait for the owner, how many may go out a day, how far apart, and whether the project is only rehearsing.',
+    description: 'Whether updates wait for the owner, how many may go out a day, how far apart, and whether the project is only rehearsing, and the longest post (maxPostChars) it accepts.',
     inputSchema: { type: 'object', additionalProperties: false, properties: {} },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },

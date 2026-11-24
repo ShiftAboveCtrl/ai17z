@@ -134,7 +134,7 @@ export const PUBLIC_DISCLOSURE = 'PUBLIC';
  * and the agent's stored policy is never touched.
  */
 export function withPostLimit(policy: PolicyConfig, maxPostChars: number): PolicyConfig {
-  if (maxPostChars <= POST_MAX_CHARS || policy.output.maxCharacters === maxPostChars) return policy;
+  if (policy.output.maxCharacters === maxPostChars) return policy;
   return { ...policy, output: { ...policy.output, maxCharacters: maxPostChars } };
 }
 

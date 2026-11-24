@@ -101,6 +101,17 @@ describe('the policy carries the project limit', () => {
     expect(withPostLimit(limited, 5000)).toBe(limited);
   });
 
+  it('does not cut a 250 character post when the agent policy is below the project limit', () => {
+    const narrow = PolicyConfig.parse({ output: { maxCharacters: 140 } });
+    const post = longPost(250);
+    const limited = withPostLimit(narrow, 280);
+    expect(limited.output.maxCharacters).toBe(280);
+    expect(narrow.output.maxCharacters).toBe(140);
+    const result = validateOutput(post, limited, null, '');
+    expect(result.output).toBe(post);
+    expect(result.violations.map((v) => v.rule)).not.toContain('max_length');
+  });
+
   it('does not trim a long post, which the agent policy alone would', () => {
     const post = longPost(2000);
     const plain = validateOutput(post, policy, null, '');

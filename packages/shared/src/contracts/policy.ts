@@ -96,7 +96,7 @@ export type EmojiPolicy = z.infer<typeof EmojiPolicy>;
 
 
 export const OutputPolicy = z.object({
-  maxCharacters: z.number().int().positive().max(20_000).default(280),
+  maxCharacters: z.number().int().positive().max(25_000).default(280),
   minCharacters: z.number().int().min(0).max(1_000).default(1),
   forbidHashtags: z.boolean().default(false),
   forbidLinks: z.boolean().default(false),

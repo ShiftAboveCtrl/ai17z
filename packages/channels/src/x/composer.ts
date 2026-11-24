@@ -843,6 +843,16 @@ export async function replyOnPage(
       }
     }
 
+    // Same check as postOwn: a thread part over 280 characters on an account
+    // without long posts fails here, permanently, rather than falling through
+    // to a keyboard submit and a retryable composer_did_not_close.
+    try {
+      await requirePostButton(opened.scope.locator(SEL.anySubmit).first(), request.text);
+    } catch (error) {
+      await returnToIdle(page);
+      throw error;
+    }
+
     await submitComposer(page, opened);
 
     // Whichever composer it was, it going away is the signal X accepted it.
