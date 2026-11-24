@@ -44,6 +44,8 @@ $Allowed = @(
   'New-Ai17zInstanceName',
   # Whether a release tag may become a filename.
   'Test-Ai17zReleaseTag',
+  'Select-Ai17zLatestRelease',
+  'Compare-Ai17zReleaseVersion',
   # Whether an update can be asked if it may proceed, and what the answer
   # meant. Both fail open, and a test machine cannot be an installation from
   # before the gate existed.

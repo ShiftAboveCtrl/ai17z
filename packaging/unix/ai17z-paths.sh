@@ -181,9 +181,8 @@ ai17z_fetch() { # destination url
 # The newest release's tag, from the first source whose list answers.
 #
 # Not /releases/latest, which is the server choosing; the list is read and the
-# first tag taken. It lists prereleases, which every AI17Z release so far is,
-# and never a draft to a caller that is not signed in. GitHub's Latest label
-# decides nothing.
+# highest version chosen by semver precedence. Prereleases are eligible and
+# drafts are excluded explicitly. GitHub's Latest label decides nothing.
 #
 # GitHub's API allows sixty anonymous requests an hour per address, and an
 # agent watching a GitHub repository from this machine spends from the same
@@ -200,15 +199,80 @@ ai17z_fetch() { # destination url
 # offers the newest it can actually install. Asset names carry the version, so
 # matching the name in the list cannot pick up another release's file.
 ai17z_latest_release_tag() { # [asset named with <version>]
-  local template="${1:-}" json tag asset index
+  pick_tag() { # json template [explicit tag]
+    # Read release objects and asset names together, then apply semver precedence.
+    # awk is present on both supported Unix platforms, including a fresh Mac.
+    printf '%s' "$1" | LC_ALL=C awk -v template="$2" -v requested="${3:-${RELEASE:-}}" '
+      function numeric(a, b) {
+        sub(/^0+/, "", a); sub(/^0+/, "", b)
+        if (length(a) != length(b)) return length(a) > length(b) ? 1 : -1
+        return ("x" a) == ("x" b) ? 0 : (("x" a) > ("x" b) ? 1 : -1)
+      }
+      function newer(a, b,    ac,bc,ap,bp,an,bn,i,c,x,y,na,nb) {
+        sub(/^v/, "", a); sub(/^v/, "", b); sub(/\+.*/, "", a); sub(/\+.*/, "", b)
+        i=index(a,"-"); ac=i ? substr(a,1,i-1) : a; ap=i ? substr(a,i+1) : ""
+        i=index(b,"-"); bc=i ? substr(b,1,i-1) : b; bp=i ? substr(b,i+1) : ""
+        split(ac,x,"."); split(bc,y,".")
+        for(i=1;i<=3;i++) { c=numeric(x[i],y[i]); if(c) return c>0 }
+        if(ap=="" || bp=="") return ap=="" && bp!=""
+        an=split(ap,x,"."); bn=split(bp,y,".")
+        for(i=1;i<=an && i<=bn;i++) {
+          na=x[i] ~ /^[0-9]+$/; nb=y[i] ~ /^[0-9]+$/
+          if(na != nb) return !na
+          c=na ? numeric(x[i],y[i]) : (("x" x[i]) == ("x" y[i]) ? 0 : (("x" x[i]) > ("x" y[i]) ? 1 : -1))
+          if(c) return c>0
+        }
+        return an>bn
+      }
+      function consider(    version,wanted) {
+        if(draft || tag !~ /^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/) return
+        if(requested!="" && tag!=requested) return
+        version=tag; sub(/^v/, "", version); wanted=template
+        sub(/<version>/, version, wanted)
+        if(requested=="" && template!="" && !(wanted in names)) return
+        if(best=="" || newer(tag,best)) best=tag
+      }
+      {
+        for(pos=1;pos<=length($0);pos++) {
+          ch=substr($0,pos,1)
+          if(quoted) {
+            if(escaped) { token=token "\\" ch; escaped=0; continue }
+            if(ch=="\\") { escaped=1; continue }
+            if(ch=="\"") {
+              quoted=0
+              if(key=="tag_name" && depth==releaseDepth) tag=token
+              if(key=="name" && assetsDepth && depth==assetsDepth+1) names[token]=1
+              last=token; key=""
+            } else token=token ch
+            continue
+          }
+          if(ch=="\"") { quoted=1; token=""; continue }
+          if(ch==":") { key=last; bare=""; continue }
+          if(ch=="{" || ch=="[") {
+            depth++
+            if(ch=="{" && !releaseDepth) { releaseDepth=depth; tag=""; draft=0; delete names }
+            if(ch=="[" && key=="assets" && depth==releaseDepth+1) assetsDepth=depth
+            key=""; bare=""; continue
+          }
+          if(ch=="," || ch=="}" || ch=="]") {
+            if(key=="draft" && depth==releaseDepth && bare ~ /true/) draft=1
+            if(ch=="}" && depth==releaseDepth) { consider(); releaseDepth=0 }
+            if(ch=="]" && depth==assetsDepth) assetsDepth=0
+            if(ch!=",") depth--
+            key=""; bare=""; continue
+          }
+          bare=bare ch
+        }
+      }
+      END { if(best!="") print best }
+    '
+  }
+  local template="${1:-}" json tag index
   for index in "${!AI17Z_SOURCE_LISTS[@]}"; do
     json="$(curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --retry 3 \
       "${AI17Z_SOURCE_LISTS[$index]}" 2>/dev/null)" || continue
-    for tag in $(printf '%s' "$json" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/'); do
-      if [ -z "$template" ]; then printf '%s\n' "$tag"; return 0; fi
-      asset="${template//<version>/${tag#v}}"
-      if printf '%s' "$json" | grep -qF "\"${asset}\""; then printf '%s\n' "$tag"; return 0; fi
-    done
+    tag="$(pick_tag "$json" "$template")"
+    if [ -n "$tag" ]; then printf '%s\n' "$tag"; return 0; fi
   done
 }
 

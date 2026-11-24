@@ -1078,6 +1078,38 @@ function Select-Ai17zTarget {
   return (& $decide 'REFUSE' '' ('there are ' + $known.Count + ' AI17Z installations here and nothing said which one'))
 }
 
+# Semver precedence ignores build metadata and compares numeric identifiers numerically.
+function Compare-Ai17zReleaseVersion {
+  param([string] $Left, [string] $Right)
+  $a = (($Left -replace '^v', '') -split '\+')[0] -split '-', 2
+  $b = (($Right -replace '^v', '') -split '\+')[0] -split '-', 2
+  $ac = $a[0] -split '\.'; $bc = $b[0] -split '\.'
+  for ($i = 0; $i -lt 3; $i++) {
+    $c = [string]::CompareOrdinal($ac[$i].PadLeft(64, '0'), $bc[$i].PadLeft(64, '0'))
+    if ($c) { return $c }
+  }
+  if ($a.Count -eq 1 -or $b.Count -eq 1) { return $b.Count - $a.Count }
+  $ap = $a[1] -split '\.'; $bp = $b[1] -split '\.'
+  for ($i = 0; $i -lt [Math]::Min($ap.Count, $bp.Count); $i++) {
+    $an = $ap[$i] -match '^\d+$'; $bn = $bp[$i] -match '^\d+$'
+    if ($an -ne $bn) { if ($an) { return -1 }; return 1 }
+    if ($an) { $c = [string]::CompareOrdinal($ap[$i].PadLeft(64, '0'), $bp[$i].PadLeft(64, '0')) }
+    else { $c = [string]::CompareOrdinal($ap[$i], $bp[$i]) }
+    if ($c) { return $c }
+  }
+  return $ap.Count - $bp.Count
+}
+
+function Select-Ai17zLatestRelease {
+  param($Releases)
+  $best = $null
+  foreach ($entry in @($Releases)) {
+    if (-not $entry -or $entry.draft -or -not (Test-Ai17zReleaseTag ('' + $entry.tag_name))) { continue }
+    if (-not $best -or (Compare-Ai17zReleaseVersion $entry.tag_name $best.tag_name) -gt 0) { $best = $entry }
+  }
+  return $best
+}
+
 <#
   Whether a release tag is one this program will build a name from.
 
@@ -2133,11 +2165,8 @@ function Get-Ai17zRelease {
     $parsed = $null
     try { $parsed = $answer.Body | ConvertFrom-Json } catch { $parsed = $null }
     $listed = @($parsed)
-    foreach ($entry in $listed) {
-      if (-not $entry -or $entry.draft) { continue }
-      $candidate = '' + $entry.tag_name
-      if (Test-Ai17zReleaseTag $candidate) { $chosen = $candidate; break }
-    }
+    $latest = Select-Ai17zLatestRelease $listed
+    if ($latest) { $chosen = '' + $latest.tag_name }
     if (-not $chosen) { return [pscustomobject]@{ Ok = $false; Status = 404; Release = $null; Why = '' } }
   }
 

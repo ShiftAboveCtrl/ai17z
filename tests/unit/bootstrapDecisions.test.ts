@@ -86,6 +86,13 @@ function askValues<T>(cases: { fn: string; args: unknown[] }[]): T[] {
 }
 
 describe('what AI17Z Setup decides about a machine', () => {
+  it('chooses the highest published version without relying on list order', () => {
+    if (!shell) return;
+    const listed = ['v1.0.0-beta.99', 'v1.0.0-beta.100', 'v1.0.0-beta.98'].map((tag_name) => ({ tag_name, draft: false }));
+    expect(call<{ tag_name: string }>('Select-Ai17zLatestRelease', listed).tag_name).toBe('v1.0.0-beta.100');
+    expect(call('Select-Ai17zLatestRelease', [{ tag_name: 'v2.0.0', draft: true }, { tag_name: 'invalid' }])).toBeNull();
+  });
+
   beforeAll(() => {
     if (!shell) return;
     expect(existsSync(script), 'the setup script is not where the release builds it from').toBe(true);
