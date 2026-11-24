@@ -56,6 +56,7 @@ import { registerBlueskyCapabilities } from './blueskyCapabilities';
 import { registerGithubCapabilities } from './githubCapabilities';
 import { registerIntrospectionCapabilities } from './introspectionCapabilities';
 import { registerManagementCapabilities } from './managementCapabilities';
+import { registerDelegationCapability } from './delegationCapability';
 import { registerWalletCapabilities } from './walletCapabilities';
 import { registerPaperCapabilities } from './paperCapabilities';
 import { registerStudioPaperCapabilities } from './studioPaperCapabilities';
@@ -103,6 +104,7 @@ export async function bootstrapRuntime(): Promise<void> {
   registerIntrospectionCapabilities();
   // Changing the agent's own settings, owner chat only and within tiers.
   registerManagementCapabilities();
+  registerDelegationCapability();
   // Reading its own wallet. Off until the owner enables the Wallet pack, and
   // useless until the owner installs a wallet adapter, which is loaded here by
   // its pinned hash or not at all. Nothing here can send.

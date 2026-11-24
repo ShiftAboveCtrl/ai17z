@@ -1,4 +1,4 @@
-import { withCallSignal } from '@xbam/shared';
+import { currentCallSignal, withCallSignal } from '@xbam/shared';
 import type { InvocationOutcome } from '@xbam/shared/contracts';
 import type { CapabilityContext } from './capability';
 import { getCapability } from './capabilityRegistry';
@@ -51,6 +51,7 @@ export interface InvokeOptions {
 export async function invokeCapability(options: InvokeOptions): Promise<InvocationResult> {
   const started = Date.now();
   const { call, context } = options;
+  const parentSignal = currentCallSignal();
   const done = (outcome: InvocationOutcome, detail: string, extra?: { input?: unknown; output?: unknown }) => ({
     capabilityId: call.id,
     outcome,
@@ -77,6 +78,8 @@ export async function invokeCapability(options: InvokeOptions): Promise<Invocati
     const where = first?.path.length ? ` at "${first.path.join('.')}"` : '';
     return done('REFUSED', `The input for ${capability.id} was wrong${where}: ${first?.message ?? 'invalid'}.`);
   }
+
+  if (parentSignal?.aborted) return done('TIMED_OUT', 'The requesting turn was cancelled.');
 
   let readiness: Awaited<ReturnType<NonNullable<typeof capability.readiness>>> | undefined;
   if (capability.readiness) {
@@ -105,6 +108,7 @@ export async function invokeCapability(options: InvokeOptions): Promise<Invocati
 
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
   /**
    * The timeout is a race, not a request.
    *
@@ -120,10 +124,10 @@ export async function invokeCapability(options: InvokeOptions): Promise<Invocati
    * nobody is waiting for any more.
    */
   const expired = new Promise<typeof TIMEOUT>((resolve) => {
-    timer = setTimeout(() => {
-      controller.abort();
-      resolve(TIMEOUT);
-    }, timeoutMs);
+    onAbort = () => { controller.abort(); resolve(TIMEOUT); };
+    parentSignal?.addEventListener('abort', onAbort, { once: true });
+    if (parentSignal?.aborted) onAbort();
+    timer = setTimeout(onAbort, timeoutMs);
   });
   try {
     /**
@@ -165,5 +169,6 @@ export async function invokeCapability(options: InvokeOptions): Promise<Invocati
     );
   } finally {
     clearTimeout(timer);
+    if (onAbort) parentSignal?.removeEventListener('abort', onAbort);
   }
 }

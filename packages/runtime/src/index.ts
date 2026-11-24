@@ -167,6 +167,7 @@ export * from './spam';
 export * from './spamControls';
 export * from './agentManagement';
 export * from './managementCapabilities';
+export * from './delegationCapability';
 export * from './walletCore';
 export * from './walletRecovery';
 export * from './tradingRisk';

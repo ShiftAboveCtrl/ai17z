@@ -14,8 +14,9 @@ import type {
  * Deliberately narrow. A capability gets the agent it belongs to, the job it is
  * part of when there is one, its own per-agent configuration and a logger --
  * and nothing else. It cannot reach the pipeline, the policy, or another
- * capability, because a capability that can call the runtime back is a second
- * control plane and there is already one.
+ * capability. Owner room delegation is a bounded callback supplied by the chat
+ * runtime, with no access to the caller's state; the delegate still enters the
+ * existing capability loop rather than gaining another execution path.
  */
 export interface CapabilityContext {
   agentId: string;
@@ -41,6 +42,12 @@ export interface CapabilityContext {
    * the agent records it, so the history says who asked and in what words.
    */
   origin?: { conversationId: string; messageId: string; text: string; ownerId: string | null } | null;
+  /** Bound by owner chat, so model input cannot supply a room or another agent's state. */
+  delegation?: {
+    run(agentId: string, task: string, signal: AbortSignal): Promise<{
+      agentId: string; content: string; detail: string; jobId: string | null;
+    }>;
+  };
   logger: Logger;
   /** Cancelled when the invocation's own timeout expires. */
   signal: AbortSignal;

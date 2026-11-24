@@ -11,6 +11,7 @@ import {
   renderMenu,
   type AnyCapability,
   type InvocationResult,
+  type CapabilityContext,
 } from '@xbam/tools';
 import { zodToDescription } from './capabilityInputShape';
 import { shortlistCapabilities, type Shortlist } from './capabilityRelevance';
@@ -76,6 +77,7 @@ export interface LoopOptions {
   origin?: { conversationId: string; messageId: string; text: string; ownerId: string | null } | null;
   /** Per-agent capability configuration, by capability id. */
   configs?: Map<string, Record<string, unknown>>;
+  delegation?: CapabilityContext['delegation'];
   maxSteps?: number;
   budgetMs?: number;
   logger?: Logger;
@@ -184,6 +186,7 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
    */
   const audience = options.audience ?? 'PUBLIC';
   const available = listModelCallable().filter((capability) => {
+    if (capability.id === 'room.delegate' && !options.delegation) return false;
     if (capability.audience === 'OWNER' && audience !== 'OWNER') return false;
     const stored = options.permissions.get(capability.id) ?? null;
     return (stored ?? permissionWhenUnset(capability)) !== 'DISABLED';
@@ -300,6 +303,7 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
         config: (current?.configs ?? options.configs)?.get(turn.call.id) ?? {},
         audience,
         origin: audience === 'OWNER' ? (options.origin ?? null) : null,
+        delegation: audience === 'OWNER' ? options.delegation : undefined,
         logger,
       },
       permission: {

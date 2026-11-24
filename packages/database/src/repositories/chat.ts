@@ -233,15 +233,43 @@ export async function postNotice(conversationId: string, content: string): Promi
   )!;
 }
 
+/** A durable claim prevents a second delegation after a worker loses its lease. */
+export async function claimDelegation(answerId: string, delegateId: string): Promise<boolean> {
+  const rows = await query(
+    `UPDATE chat_messages a SET evidence = a.evidence || jsonb_build_object('delegationAttempt', $2::text)
+      FROM chat_messages o
+      WHERE a.id = $1 AND a.author_kind = 'AGENT' AND a.status = 'ANSWERING'
+        AND a.answers = o.id AND o.author_kind = 'OWNER'
+        AND NOT (a.evidence ? 'delegationAttempt') AND NOT (a.evidence ? 'delegatedFrom')
+      RETURNING a.id`,
+    [answerId, delegateId],
+  );
+  return rows.length > 0;
+}
+
+/** Inline work is already settled here; it must never become a worker queue item. */
+export async function postDelegatedAnswer(input: {
+  conversationId: string; agentId: string; ownerMessageId: string;
+  status: 'DONE' | 'FAILED'; content: string; evidence: Record<string, unknown>; error: string | null;
+}): Promise<ChatMessage> {
+  return mapRow<ChatMessage>(await queryOne(
+    `INSERT INTO chat_messages (conversation_id, author_kind, agent_id, answers, status, content, evidence, error, answered_at)
+     VALUES ($1, 'AGENT', $2, $3, $4, $5, $6::jsonb, $7, now()) RETURNING ${MESSAGE_COLUMNS}`,
+    [input.conversationId, input.agentId, input.ownerMessageId, input.status, input.content, JSON.stringify(input.evidence), input.error],
+  ))!;
+}
+
 /** Asks one agent to answer an owner message again, after a failure. */
 export async function requeueAnswer(ownerId: string, answerId: string): Promise<ChatMessage | null> {
   return mapRow<ChatMessage>(
     await queryOne(
-      `UPDATE chat_messages m SET status = 'PENDING', error = NULL, content = '', evidence = '{}'::jsonb,
+      `UPDATE chat_messages m SET status = 'PENDING', error = NULL, content = '',
+              evidence = '{}'::jsonb,
               locked_by = NULL, lock_expires_at = NULL, answered_at = NULL
          FROM chat_conversations c
         WHERE m.id = $1 AND m.conversation_id = c.id AND c.owner_id = $2
           AND m.author_kind = 'AGENT' AND m.status IN ('FAILED', 'CANCELLED')
+          AND NOT (m.evidence ? 'delegatedFrom')
         RETURNING ${MESSAGE_COLUMNS.split(', ').map((c) => `m.${c}`).join(', ')}`,
       [answerId, ownerId],
     ),
@@ -314,7 +342,7 @@ export async function settleAnswer(
   outcome: { status: 'DONE' | 'FAILED'; content: string; evidence: Record<string, unknown>; error: string | null },
 ): Promise<boolean> {
   const rows = await query(
-    `UPDATE chat_messages SET status = $3, content = $4, evidence = $5::jsonb, error = $6,
+    `UPDATE chat_messages SET status = $3, content = $4, evidence = evidence || $5::jsonb, error = $6,
             locked_by = NULL, lock_expires_at = NULL, answered_at = now()
       WHERE id = $1 AND locked_by = $2 AND status = 'ANSWERING' RETURNING id`,
     [id, workerId, outcome.status, outcome.content, JSON.stringify(outcome.evidence), outcome.error],
