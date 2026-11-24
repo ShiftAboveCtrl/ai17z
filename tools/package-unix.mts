@@ -112,6 +112,7 @@ const SHARED_UNIX = [
   // one of them exits on its first line saying so -- which is the right
   // failure, and one that must never actually happen.
   'packaging/unix/ai17z-paths.sh',
+  'packaging/unix/ai17z-release.sh',
   'start-ai17z.sh',
   'stop-ai17z.sh',
   'restart-ai17z.sh',
