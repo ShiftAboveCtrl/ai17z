@@ -267,9 +267,10 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
     // Recheck before spending a model call as well as before using its choice.
     // PAUSE ALL stops planning itself, and a permission read must fail closed.
     const before = await options.goalPlan?.checkpoint();
-    if (before && (before.paused || !before.enabled)) {
+    if (before && (before.paused || !before.enabled || before.autonomy === 'OBSERVE')) {
       return { answer: '', steps, exhausted: false, shortlist, halted: 'STOPPED',
-        reason: before.paused ? 'Everything is paused.' : 'The goal or its capability loop is no longer enabled.' };
+        reason: before.paused ? 'Everything is paused.' : before.autonomy === 'OBSERVE'
+          ? 'Goal planning requires THINK or higher.' : 'The goal or its capability loop is no longer enabled.' };
     }
     if (options.goalPlan && Date.now() >= deadline) { exhausted = true; break; }
 
@@ -286,9 +287,10 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
     }
 
     const current = await options.goalPlan?.checkpoint();
-    if (current && (current.paused || !current.enabled)) {
+    if (current && (current.paused || !current.enabled || current.autonomy === 'OBSERVE')) {
       return { answer: '', steps, exhausted: false, shortlist, halted: 'STOPPED',
-        reason: current.paused ? 'Everything is paused.' : 'The goal or its capability loop is no longer enabled.' };
+        reason: current.paused ? 'Everything is paused.' : current.autonomy === 'OBSERVE'
+          ? 'Goal planning requires THINK or higher.' : 'The goal or its capability loop is no longer enabled.' };
     }
     if (options.goalPlan && Date.now() >= deadline) { exhausted = true; break; }
 
@@ -307,7 +309,7 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
     }
 
     const wasOffered = offered.some(capability => capability.id === turn.call.id);
-    if (wasOffered && current && current.autonomy !== 'ACT') {
+    if (wasOffered && current && current.autonomy !== 'ACT' && getCapability(turn.call.id)?.effect !== 'READ') {
       const parsed = getCapability(turn.call.id)?.input.safeParse(turn.call.input);
       let detail = 'Proposed for the owner; this agent is below ACT.';
       let queued = false;

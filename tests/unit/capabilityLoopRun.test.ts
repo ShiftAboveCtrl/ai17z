@@ -434,17 +434,33 @@ describe('a goal plan uses the same loop with live gates', () => {
     } finally { vi.restoreAllMocks(); }
   });
 
-  it('proposes at SUGGEST without executing or claiming a refused invocation', async () => {
+  it.each(['THINK', 'SUGGEST'] as const)('at %s executes a read and returns its outcome', async autonomy => {
     const result = await runCapabilityLoop({
-      ...base, generate: async () => call('test.clock'),
+      ...base, generate: vi.fn().mockResolvedValueOnce(call('test.clock')).mockResolvedValue('Checked.'),
       goalPlan: {
-        checkpoint: async () => ({ ...await checkpoint(), autonomy: 'SUGGEST' }),
+        checkpoint: async () => ({ ...await checkpoint(), autonomy }),
         onStep: async () => undefined,
       },
     });
-    expect(result.halted).toBe('PROPOSED');
-    expect(result.steps).toMatchObject([{ outcome: 'PROPOSED' }]);
-    expect(recorded).toHaveLength(0);
+    expect(result.halted).toBeUndefined();
+    expect(result.steps).toMatchObject([{ outcome: 'SUCCEEDED', output: { now: 'noon' } }]);
+    expect(recorded).toEqual([{ capabilityId: 'test.clock', outcome: 'SUCCEEDED', step: 1 }]);
+  });
+
+  it.each([false, true])('at OBSERVE stops before running a read (downgraded during generation: %s)', async downgrade => {
+    let autonomy: 'THINK' | 'OBSERVE' = downgrade ? 'THINK' : 'OBSERVE';
+    const generate = vi.fn(async () => { autonomy = 'OBSERVE'; return call('test.clock'); });
+    const result = await runCapabilityLoop({
+      ...base, generate,
+      goalPlan: {
+        checkpoint: async () => ({ ...await checkpoint(), autonomy }),
+        onStep: async () => undefined,
+      },
+    });
+    expect(result.halted).toBe('STOPPED');
+    expect(result.steps).toEqual([]);
+    expect(recorded).toEqual([]);
+    expect(generate).toHaveBeenCalledTimes(downgrade ? 1 : 0);
   });
 
   it('refreshes a permission revoked while the model was generating', async () => {
