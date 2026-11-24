@@ -238,7 +238,7 @@ export async function actionForAgent(agentId: string, ref: string): Promise<{ id
   const row = await queryOne<{ id: string; job_id: string }>(
     `SELECT a.id, a.job_id FROM actions a
       WHERE a.agent_id = $1 AND NOT a.dry_run
-        AND (${uuid ? 'a.id = $2::uuid OR a.job_id = $2::uuid OR ' : ''}a.remote_action_id = $2 OR a.target_ref = $2)
+        AND (${uuid ? 'a.id = $2::uuid OR a.job_id = $2::uuid OR ' : ''}a.remote_action_id = $2::text OR a.target_ref = $2::text)
       ORDER BY a.executed_at DESC NULLS LAST LIMIT 1`,
     [agentId, ref],
   );

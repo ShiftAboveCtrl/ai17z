@@ -48,8 +48,9 @@ async function adminClient(): Promise<pg.Client> {
  * gets the chance, so runs leak them. Having no connections is the honest test
  * for "finished": a run still going always holds at least one.
  *
- * Done at the start rather than the end for the same reason -- the run that
- * made the mess is exactly the one that cannot clean it up.
+ * Run explicitly with tools/prune-test-databases.mts, outside timed hooks.
+ * DROP DATABASE can wait over a minute for PostgreSQL's checkpoint even for
+ * one database. Putting that sweep in setup delayed unrelated test processes.
  *
  * The subtlety is the window. A database that has just been created and not yet
  * connected to *also* has no connections, so a second run sweeping at that
@@ -62,7 +63,7 @@ async function adminClient(): Promise<pg.Client> {
 async function dropFinished(client: pg.Client): Promise<void> {
   const { rows } = await client.query<{ datname: string }>(
     `SELECT d.datname FROM pg_database d
-      WHERE d.datname LIKE 'xbam_test_%'
+      WHERE d.datname ~ '^xbam_test_[0-9]+_[0-9a-f]{6}$'
         AND NOT EXISTS (SELECT 1 FROM pg_stat_activity a WHERE a.datname = d.datname)`,
   );
   for (const row of rows) {
@@ -112,6 +113,18 @@ export async function releaseOwnership(): Promise<void> {
  */
 const SETUP_LOCK = 8_417_231;
 
+/** Maintenance only: never make timed setup wait for database deletion. */
+export async function pruneTestDatabases(): Promise<void> {
+  const admin = await adminClient();
+  try {
+    await admin.query('SELECT pg_advisory_lock($1)', [SETUP_LOCK]);
+    await dropFinished(admin);
+  } finally {
+    await admin.query('SELECT pg_advisory_unlock($1)', [SETUP_LOCK]).catch(() => undefined);
+    await admin.end();
+  }
+}
+
 export async function setupTestDatabase(): Promise<void> {
   if (owned) return;
 
@@ -120,11 +133,10 @@ export async function setupTestDatabase(): Promise<void> {
 
   const admin = await adminClient();
   try {
-    // Held across the sweep, the create, and the first connection -- because
+    // Held across the create and the first connection -- because
     // the gap between creating a database and connecting to it is exactly when
     // another run's sweep would decide it is finished with.
     await admin.query('SELECT pg_advisory_lock($1)', [SETUP_LOCK]);
-    await dropFinished(admin).catch(() => undefined);
     await admin.query(`CREATE DATABASE "${name}"`);
     owned = name;
 
@@ -134,12 +146,14 @@ export async function setupTestDatabase(): Promise<void> {
     }
     // Inside the lock: this is the connection that makes the new database
     // visibly in use, and until it exists the database looks abandoned.
-    await migrate();
     await holdOwnership(name);
   } finally {
     await admin.query('SELECT pg_advisory_unlock($1)', [SETUP_LOCK]).catch(() => undefined);
     await admin.end().catch(() => undefined);
   }
+  // Each database has its own migration lock. Holding SETUP_LOCK through every
+  // migration serializes unrelated processes and can exhaust the hook timeout.
+  await migrate();
 }
 
 /**
@@ -185,8 +199,8 @@ export async function truncateAll(): Promise<void> {
  * database for every file -- sixty-odd per run, none of them cleaned up,
  * because the process that owns one is the one that cannot drop it. The pool
  * reopens on the next query against the same URL, so closing it is all this
- * needs to do; the database is dropped by the next run's `dropFinished`, once
- * nobody is connected to it.
+ * needs to do. The explicit maintenance command prunes databases once nobody
+ * is connected to them.
  */
 export async function teardownTestDatabase(): Promise<void> {
   await closePool();
