@@ -14,6 +14,7 @@ import {
 import { JobWorker, capabilitiesFor, type WorkerRole } from '@xbam/jobs';
 import {
   bootstrapRuntime,
+  sweepCapabilityApprovals,
   deliverNotifications,
   indexSource,
   installTelegramTransport,
@@ -469,6 +470,9 @@ async function main(): Promise<void> {
     the question an owner asks exactly when a machine is struggling.
   */
   let chatting = 0;
+  // Capability readiness decides what this worker can execute. Keep slow calls
+  // off the chat tick so an approval cannot delay the owner's next answer.
+  const approvalQueue = startLoop('capability-approvals', 5_000, sweepCapabilityApprovals, 'ESSENTIAL');
   const chat = startLoop(
     'owner-chat',
     1_500,
@@ -578,6 +582,7 @@ async function main(): Promise<void> {
     if (engagement) clearInterval(engagement);
     if (foundry) clearInterval(foundry);
     clearInterval(chat);
+    clearInterval(approvalQueue);
     if (tabReporter) clearInterval(tabReporter);
     // Withdraw immediately rather than waiting for the heartbeat to lapse: a
     // clean shutdown knows it is leaving.

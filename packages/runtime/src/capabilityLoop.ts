@@ -1,5 +1,5 @@
-import { capabilityInvocations } from '@xbam/database';
-import { createLogger, type Logger } from '@xbam/shared';
+import { capabilityApprovals, capabilityInvocations } from '@xbam/database';
+import { canonicalJson, createLogger, sha256Hex, type Logger } from '@xbam/shared';
 import type { AutonomyLevel, ChatMessage } from '@xbam/shared/contracts';
 import { permissionWhenUnset, type CapabilityPermission } from '@xbam/shared/contracts';
 import {
@@ -96,6 +96,7 @@ export interface LoopOptions {
   logger?: Logger;
   /** A wake owns the plan; the loop remains the only capability executor. */
   goalPlan?: {
+    sourceRef?: string;
     checkpoint(): Promise<{
       permissions: Map<string, CapabilityPermission>;
       configs: Map<string, Record<string, unknown>>;
@@ -182,6 +183,22 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
   const maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS;
   const budgetMs = options.budgetMs ?? DEFAULT_BUDGET_MS;
   const deadline = Date.now() + budgetMs;
+  const proposalRef = options.goalPlan?.sourceRef ?? options.origin?.messageId ?? options.jobId ??
+    sha256Hex(canonicalJson(options.messages));
+  const propose = async (capabilityId: string, input: unknown, step: number, why: string) => {
+    try {
+      const saved = await capabilityApprovals.propose({ agentId: options.agentId, capabilityId, input,
+        source: options.origin ? 'OWNER_CHAT' : options.goalPlan ? 'GOAL_PLAN' : 'REPLY',
+        sourceRef: `${proposalRef}:${step}`, why, jobId: options.jobId, accountId: options.accountId,
+        audience: options.audience ?? 'PUBLIC', origin: options.origin ?? null });
+      return saved !== false;
+    } catch (error) {
+      logger.error('capability proposal could not be queued', {
+        capabilityId, errorClass: error instanceof Error ? error.name : typeof error,
+      });
+      return false;
+    }
+  };
 
   /**
    * What this agent may actually reach for, not everything that exists.
@@ -292,12 +309,17 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
     const wasOffered = offered.some(capability => capability.id === turn.call.id);
     if (wasOffered && current && current.autonomy !== 'ACT') {
       const parsed = getCapability(turn.call.id)?.input.safeParse(turn.call.input);
-      const detail = 'Proposed for the owner; this agent is below ACT.';
-      const stoppedStep = { capabilityId: turn.call.id, outcome: 'PROPOSED',
+      let detail = 'Proposed for the owner; this agent is below ACT.';
+      let queued = false;
+      if (parsed?.success && current.permissions.get(turn.call.id) !== 'DISABLED') {
+        queued = await propose(turn.call.id, parsed.data, step, detail);
+      }
+      if (!queued) detail = 'The call could not be queued for owner approval.';
+      const stoppedStep = { capabilityId: turn.call.id, outcome: queued ? 'PROPOSED' : 'REFUSED',
         detail, durationMs: 0, output: null, input: parsed?.success ? parsed.data : null };
       steps.push(stoppedStep);
       await options.goalPlan!.onStep(stoppedStep, step);
-      return { answer: '', steps, exhausted: false, shortlist, halted: 'PROPOSED', reason: detail };
+      return { answer: '', steps, exhausted: false, shortlist, halted: queued ? 'PROPOSED' : 'STOPPED', reason: detail };
     }
 
     // A model can name something absent from its menu. Record the refusal
@@ -335,6 +357,15 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
         ? options.readOnly.sanitizeValue(invoked) as InvocationResult
         : JSON.parse(options.readOnly.sanitize(JSON.stringify(invoked))) as InvocationResult
       : invoked;
+
+    // An external read-only turn may read and nothing else, so it never queues
+    // a proposal either: a row an owner must act on is a write.
+    if (!options.readOnly && result.needsApproval && result.input !== null) {
+      if (!(await propose(result.capabilityId, result.input, step, 'This capability requires owner approval for this call.'))) {
+        result.detail = 'The call could not be queued for owner approval.';
+      }
+    }
+
     steps.push({
       capabilityId: result.capabilityId,
       outcome: result.outcome,

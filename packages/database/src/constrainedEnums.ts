@@ -14,6 +14,8 @@ import {
   AUTONOMY_LEVELS,
   AVATAR_MODES,
   CAPABILITY_PERMISSIONS,
+  CAPABILITY_APPROVAL_STATUSES,
+  CAPABILITY_APPROVAL_SOURCES,
   BROWSER_CHANNELS,
   BROWSER_ENGINES,
   BROWSER_MODES,
@@ -130,6 +132,9 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
   { table: 'agents', column: 'state', values: AGENT_STATES },
   { table: 'approvals', column: 'status', values: APPROVAL_STATUSES },
   { table: 'capability_invocations', column: 'outcome', values: INVOCATION_OUTCOMES },
+  { table: 'capability_approvals', column: 'status', values: CAPABILITY_APPROVAL_STATUSES },
+  { table: 'capability_approvals', column: 'source', values: CAPABILITY_APPROVAL_SOURCES },
+  { table: 'capability_approvals', column: 'audience', values: ['OWNER', 'PUBLIC'], note: 'Preserves the original invocation audience.' },
   {
     table: 'post_analytics',
     column: 'source',

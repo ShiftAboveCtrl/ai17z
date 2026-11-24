@@ -1,10 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { ConflictError, ForbiddenError, NotFoundError } from '@xbam/shared';
+import { ConflictError, ForbiddenError, NotFoundError, redact } from '@xbam/shared';
 import { ATTENTION_STATES, AUTONOMY_LEVELS, GOAL_STATUSES } from '@xbam/shared/contracts';
 import { wakeAgent } from '@xbam/runtime';
 import {
   agents as agentsRepo,
+  capabilityApprovals,
   deliberation as mind,
   engagements as engagementsRepo,
   ops,
@@ -45,6 +46,38 @@ async function ownedAgent(agentId: string, user: UserRow) {
 }
 
 export async function mindRoutes(app: FastifyInstance): Promise<void> {
+  // Show the saved validated call for informed consent, with credential fields
+  // removed before serialization or truncation. Provider results stay private.
+  const approvalView = (row: capabilityApprovals.CapabilityApprovalRow) => {
+    const preview = JSON.stringify(redact(row.input), null, 2);
+    return {
+      id: row.id, capabilityId: row.capabilityId, source: row.source,
+      status: row.executionKey === null && ['PENDING', 'APPROVED'].includes(row.status) &&
+        Date.parse(row.expiresAt) <= Date.now() ? 'EXPIRED' : row.status,
+      why: row.why, expiresAt: row.expiresAt, decidedAt: row.decidedAt, resultReason: row.resultReason,
+      inputPreview: preview.slice(0, 12_000), inputTruncated: preview.length > 12_000,
+    };
+  };
+  app.get('/api/agents/:id/mind/capability-approvals', handler(async request => {
+    const user = await requireUser(request);
+    const agent = await ownedAgent(params(request).id!, user);
+    return (await capabilityApprovals.listForAgent(agent.id)).map(approvalView);
+  }));
+  app.post('/api/agents/:id/mind/capability-approvals/:approvalId/decision', handler(async request => {
+    const user = await requireUser(request);
+    const agent = await ownedAgent(params(request).id!, user);
+    const id = z.uuid().parse(params(request).approvalId);
+    const body = parseBody(z.discriminatedUnion('decision', [
+      z.object({ decision: z.literal('APPROVE') }).strict(),
+      z.object({ decision: z.literal('REJECT'), reason: z.string().trim().min(1).max(500) }).strict(),
+    ]), request);
+    if (!(await capabilityApprovals.get(id, agent.id))) throw new NotFoundError('Capability proposal');
+    if (!(await capabilityApprovals.decide({ id, agentId: agent.id, ownerId: user.id, ...body }))) {
+      throw new ConflictError('This call already has a decision or has settled. Refresh the queue to see its current state.');
+    }
+    return approvalView((await capabilityApprovals.get(id, agent.id))!);
+  }));
+
   /**
    * Everything on one screen: what is on its mind, what it is trying to do,
    * what it has been doing, and how much it is allowed to do on its own.

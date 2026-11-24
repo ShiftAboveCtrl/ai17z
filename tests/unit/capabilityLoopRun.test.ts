@@ -10,6 +10,8 @@ const recorded: { capabilityId: string; outcome: string; step: number }[] = [];
 vi.mock('@xbam/database', () => ({
   // peerReview.ts reads agents.getAgent while the runtime is imported; nothing here calls it.
   agents: {},
+  // Durable approval records and claims are exercised against Postgres in integration.
+  capabilityApprovals: { async propose() {} },
   capabilityInvocations: {
     async recordInvocation(input: { capabilityId: string; outcome: string; step: number }) {
       recorded.push({ capabilityId: input.capabilityId, outcome: input.outcome, step: input.step });
@@ -77,6 +79,26 @@ const base = {
 };
 
 describe('the capability loop', () => {
+  it.each([false, true])('survives a failed proposal write (goal plan: %s)', async goal => {
+    const { capabilityApprovals } = await import('@xbam/database');
+    const save = vi.spyOn(capabilityApprovals, 'propose').mockRejectedValueOnce(new Error('private-db-error'));
+    const generate = vi.fn().mockResolvedValueOnce(call('test.clock')).mockResolvedValue('Could not queue the call.');
+    try {
+      const result = await runCapabilityLoop({ ...base, generate, maxSteps: 1,
+        permissions: new Map([['test.clock', 'OWNER_APPROVAL']]),
+        ...(goal ? { goalPlan: {
+          checkpoint: async () => ({ permissions: new Map([['test.clock', 'OWNER_APPROVAL' as const]]),
+            configs: new Map(), paused: false, autonomy: 'SUGGEST' as const, enabled: true }),
+          onStep: async () => {},
+        } } : {}),
+      });
+      expect(result.steps[0]?.detail).toContain('could not be queued');
+      if (!goal) expect(generate.mock.calls[1]![0]).toContainEqual(expect.objectContaining({
+        role: 'system', content: expect.stringContaining('could not be queued'),
+      }));
+    } finally { save.mockRestore(); }
+  });
+
   it('offers an approved pure read while excluding an unknown READ-labelled capability', async () => {
     registerCapability(defineCapability({ ...clock, id: 'time.now' }));
     const outcome = await runCapabilityLoop({ ...base, task: 'time.now test.clock test.settings',

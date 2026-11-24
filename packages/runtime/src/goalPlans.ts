@@ -75,6 +75,7 @@ export async function pursueGoal(agentId: string, accountId: string | null): Pro
           purpose: 'goal-plan', messages, maxCalls: 1, retainOutput: false, timeoutMs: remaining })).text;
       },
       goalPlan: {
+        sourceRef: `${goal.id}:${plan.startedAt}`,
         checkpoint: async () => {
           const [currentAgent, currentWake, paused, currentGoals, currentSettings] = await Promise.all([
             agents.getAgent(agentId), mind.getWake(agentId), pauseState(),

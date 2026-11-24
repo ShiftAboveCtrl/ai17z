@@ -254,3 +254,4 @@ export * from './studioRiskWatches';
 export * from './studioCoinAlerts';
 export * from './evidenceFollowUp';
 export * from './evidenceFollowUpOffer';
+export * from './capabilityApprovals';

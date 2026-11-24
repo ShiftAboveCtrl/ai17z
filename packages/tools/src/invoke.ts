@@ -15,6 +15,7 @@ export interface InvocationResult {
   /** One sentence, for the model, the trace and the owner alike. */
   detail: string;
   durationMs: number;
+  needsApproval?: boolean;
 }
 
 /** A value nothing else can return, so the race is unambiguous. */
@@ -27,6 +28,8 @@ export interface InvokeOptions {
   permission: Omit<PermissionInputs, 'capability' | 'readiness'>;
   /** Remaining loop budget, using the invocation's existing timeout. */
   budgetMs?: number;
+  /** Refresh volatile owner gates after readiness has awaited external work. */
+  recheckPermission?(): Promise<InvokeOptions['permission']>;
 }
 
 /**
@@ -97,9 +100,10 @@ export async function invokeCapability(options: InvokeOptions): Promise<Invocati
       readiness = checked;
     } finally { clearTimeout(readyTimer); }
   }
-  const decision = resolvePermission({ ...options.permission, capability, readiness });
+  const permission = options.recheckPermission ? await options.recheckPermission() : options.permission;
+  const decision = resolvePermission({ ...permission, capability, readiness });
   if (!decision.allowed) {
-    return done('REFUSED', decision.why, { input: parsedInput.data });
+    return { ...done('REFUSED', decision.why, { input: parsedInput.data }), needsApproval: decision.needsApproval };
   }
 
   const timeoutMs = Math.min(capability.timeoutMs, options.budgetMs === undefined
