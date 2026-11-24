@@ -10,6 +10,8 @@ const log = createLogger('model-gateway');
 const FALLBACK_ORDER: ModelRole[] = ['primary', 'fallback_1', 'fallback_2'];
 
 export interface GenerateRequest {
+  /** Sanitize external owner-client records before any persistence or trace. */
+  sanitize?: (text: string) => string;
   agentId: string;
   jobId: string | null;
   purpose: string;
@@ -92,6 +94,7 @@ function estimateCost(
  * attempt is on record and the next role or the next retry picks it up.
  */
 export async function generate(request: GenerateRequest): Promise<GenerateResult> {
+  const safe = request.sanitize ?? ((text: string) => text);
   const targets = await resolveTargets(request.agentId, request.role);
   if (targets.length === 0) {
     throw PipelineError.permanent(
@@ -133,19 +136,19 @@ export async function generate(request: GenerateRequest): Promise<GenerateResult
         providerCredentialId: target.providerCredentialId,
         purpose: request.purpose,
         provider: target.provider,
-        model: target.model,
+        model: safe(target.model),
         modelRole: target.role,
         attempt,
-        parameters: target.parameters as Record<string, unknown>,
-        promptLayers: request.promptLayers ?? null,
-        promptText: request.promptText ?? null,
+        parameters: request.sanitize ? {} : target.parameters as Record<string, unknown>,
+        promptLayers: request.sanitize ? null : request.promptLayers ?? null,
+        promptText: request.sanitize ? null : request.promptText ?? null,
       });
       await observability.emitTrace({
         jobId: request.jobId,
         agentId: request.agentId,
         type: 'MODEL_REQUEST_STARTED',
-        message: `${target.provider} / ${target.model} (${target.role}, attempt ${attempt})`,
-        data: { modelCallId, role: target.role, provider: target.provider, model: target.model },
+        message: safe(`${target.provider} / ${target.model} (${target.role}, attempt ${attempt})`),
+        data: { modelCallId, role: target.role, provider: target.provider, model: safe(target.model) },
       });
 
       const startedAt = Date.now();
@@ -163,7 +166,7 @@ export async function generate(request: GenerateRequest): Promise<GenerateResult
         await observability.finishModelCall(modelCallId, {
           status: 'COMPLETED',
           rawOutput: request.retainOutput === false ? null : response.text,
-          requestId: response.requestId,
+          requestId: response.requestId ? safe(response.requestId) : response.requestId,
           latencyMs,
           promptTokens: response.promptTokens,
           completionTokens: response.completionTokens,
@@ -173,13 +176,13 @@ export async function generate(request: GenerateRequest): Promise<GenerateResult
           jobId: request.jobId,
           agentId: request.agentId,
           type: 'MODEL_REQUEST_COMPLETED',
-          message: `${target.provider} / ${target.model} responded in ${latencyMs}ms`,
+          message: safe(`${target.provider} / ${target.model} responded in ${latencyMs}ms`),
           data: { modelCallId, latencyMs, chars: response.text.length },
         });
         return {
-          text: response.text,
+          text: safe(response.text),
           provider: target.provider,
-          model: target.model,
+          model: safe(target.model),
           role: target.role,
           modelCallId,
           promptTokens: response.promptTokens,
@@ -191,6 +194,7 @@ export async function generate(request: GenerateRequest): Promise<GenerateResult
         const pipelineError = isPipelineError(error)
           ? error
           : PipelineError.retryable('provider_exception', errorMessage(error), {}, error);
+        if (request.sanitize) pipelineError.message = safe(pipelineError.message);
         lastError = pipelineError;
         await observability.finishModelCall(modelCallId, {
           status: 'FAILED',
@@ -204,12 +208,12 @@ export async function generate(request: GenerateRequest): Promise<GenerateResult
           type: 'MODEL_REQUEST_FAILED',
           level: 'warn',
           message: pipelineError.message,
-          data: { modelCallId, role: target.role, reason: pipelineError.reason, errorClass: pipelineError.errorClass },
+          data: { modelCallId, role: target.role, reason: safe(pipelineError.reason), errorClass: pipelineError.errorClass },
         });
         log.warn('model attempt failed', {
           role: target.role,
           provider: target.provider,
-          reason: pipelineError.reason,
+          reason: safe(pipelineError.reason),
         });
         // A permanent error will not improve on a second attempt; move to the
         // next configured role instead of burning the budget.
