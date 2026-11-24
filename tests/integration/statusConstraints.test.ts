@@ -8,6 +8,8 @@ import {
   TELEGRAM_OUTBOX_STATES,
   TRACE_EVENT_TYPES,
   GOAL_PLAN_STATES,
+  CAPABILITY_APPROVAL_STATUSES,
+  CAPABILITY_APPROVAL_SOURCES,
   CHECK_BOARD_CHAINS,
   EVIDENCE_COMPARE_SIDES,
   EVIDENCE_MOVE_WINDOWS,
@@ -39,6 +41,25 @@ import { createFixture } from '../support/fixtures';
 import { uniqueSuffix } from '../support/db';
 
 installHarness();
+
+it('accepts every capability approval vocabulary and enforces its unique execution key', async () => {
+  const f = await createFixture();
+  const insert = async (status: string, source: string, audience = 'PUBLIC') => query<{ id: string }>(
+    `INSERT INTO capability_approvals(agent_id,capability_id,input,input_sha256,source,source_ref,status,why,audience)
+     VALUES($1,'test.publish','{}',$2,$3,$4,$5,'Owner decision required.',$6) RETURNING id`,
+    [f.agentId, 'a'.repeat(64), source, uniqueSuffix(), status, audience]);
+  for (const status of CAPABILITY_APPROVAL_STATUSES) await insert(status, 'REPLY');
+  for (const source of CAPABILITY_APPROVAL_SOURCES) await insert('PENDING', source);
+  for (const audience of ['PUBLIC', 'OWNER']) await insert('PENDING', 'REPLY', audience);
+  await expect(insert('RETRY', 'REPLY')).rejects.toThrow(/check constraint/);
+  await expect(insert('PENDING', 'MODEL')).rejects.toThrow(/check constraint/);
+  await expect(insert('PENDING', 'REPLY', 'OTHER')).rejects.toThrow(/check constraint/);
+  const [first] = await insert('APPROVED', 'REPLY');
+  const [second] = await insert('APPROVED', 'REPLY');
+  await query('UPDATE capability_approvals SET execution_key=id WHERE id=$1', [first!.id]);
+  await expect(query('UPDATE capability_approvals SET execution_key=$1 WHERE id=$2', [first!.id, second!.id]))
+    .rejects.toThrow(/duplicate key/);
+});
 
 it('accepts every goal plan state and rejects unknown or missing states', async () => {
   const f = await createFixture();

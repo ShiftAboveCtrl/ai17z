@@ -28,6 +28,7 @@ export * as personaSources from './repositories/personaSources';
 export * as cadences from './repositories/cadences';
 export * as capabilities from './repositories/capabilities';
 export * as capabilityInvocations from './repositories/capabilityInvocations';
+export * as capabilityApprovals from './repositories/capabilityApprovals';
 export * as postAnalytics from './repositories/postAnalytics';
 export * as growth from './repositories/growth';
 export * as narrativePulseRepo from './repositories/narrativePulse';

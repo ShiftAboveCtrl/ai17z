@@ -10,6 +10,8 @@ const recorded: { capabilityId: string; outcome: string; step: number }[] = [];
 vi.mock('@xbam/database', () => ({
   // peerReview.ts reads agents.getAgent while the runtime is imported; nothing here calls it.
   agents: {},
+  // Durable approval records and claims are exercised against Postgres in integration.
+  capabilityApprovals: { async propose() {} },
   capabilityInvocations: {
     async recordInvocation(input: { capabilityId: string; outcome: string; step: number }) {
       recorded.push({ capabilityId: input.capabilityId, outcome: input.outcome, step: input.step });

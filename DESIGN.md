@@ -1,5 +1,15 @@
 # Radar evidence extension
 
+## Capability approval queue
+
+Keep capability decisions beside proposals on the existing deliberation screen.
+Reuse its Panel, Card, ink and bone tokens, typography and focus styles. Show
+the capability, source, runtime reason, expiry and settled status. Keep saved
+inputs and provider output private. Approval is for one stored call and cannot
+change a permission. Use a labelled required rejection reason, 48px controls,
+single-column forms and wrapping sentences at 390px. Disable decision controls
+while saving, announce errors, and refresh approved calls until settled.
+
 ## Development update thread review
 
 Preserve the existing Review panel, typography, spacing and focus styles. Show

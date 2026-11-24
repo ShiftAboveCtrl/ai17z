@@ -1,5 +1,10 @@
 import { z } from 'zod';
 
+export const CAPABILITY_APPROVAL_STATUSES = ['PENDING', 'APPROVED', 'DENIED', 'EXPIRED', 'DONE', 'FAILED'] as const;
+export type CapabilityApprovalStatus = (typeof CAPABILITY_APPROVAL_STATUSES)[number];
+export const CAPABILITY_APPROVAL_SOURCES = ['GOAL_PLAN', 'REPLY', 'OWNER_CHAT'] as const;
+export type CapabilityApprovalSource = (typeof CAPABILITY_APPROVAL_SOURCES)[number];
+
 /**
  * What a capability is, in the vocabulary every layer shares.
  *

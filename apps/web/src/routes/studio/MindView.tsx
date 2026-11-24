@@ -3,6 +3,7 @@ import { useElapsed, useResource } from '@app/lib/hooks';
 import { del, post, put } from '@app/lib/api';
 import { EmptyState, RetryablePanel, Spinner, Working } from '@app/components/ui';
 import { Card, Gaps, Panel, Reasons } from './shared';
+import { CapabilityApprovals } from './CapabilityApprovals';
 
 /**
  * What the agent has been thinking about.
@@ -468,6 +469,8 @@ export function MindView({ agentId }: { agentId: string }) {
           </div>
         )}
       </Panel>
+
+      <CapabilityApprovals key={agentId} agentId={agentId} />
 
       <Panel
         title="What it is trying to do"

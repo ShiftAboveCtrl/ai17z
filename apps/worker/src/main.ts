@@ -14,6 +14,7 @@ import {
 import { JobWorker, capabilitiesFor, type WorkerRole } from '@xbam/jobs';
 import {
   bootstrapRuntime,
+  sweepCapabilityApprovals,
   deliverNotifications,
   indexSource,
   installTelegramTransport,
@@ -476,6 +477,7 @@ async function main(): Promise<void> {
       if (chatting >= 2) return;
       chatting += 1;
       try {
+        if (capabilities.browserCapable) await sweepCapabilityApprovals();
         await sweepOwnerChat(workerId, { mayResearch: capabilities.browserCapable });
       } finally {
         chatting -= 1;
