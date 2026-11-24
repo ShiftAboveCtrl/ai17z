@@ -269,7 +269,10 @@ export function releaseName(version = buildVersion().version): ReleaseName {
  */
 export function compareVersions(a: string, b: string): number {
   const parse = (value: string) => {
-    const [core = '', pre = ''] = value.replace(/^v/, '').split('-', 2);
+    const normalized = value.replace(/^v/, '').split('+', 1)[0]!;
+    const dash = normalized.indexOf('-');
+    const core = dash < 0 ? normalized : normalized.slice(0, dash);
+    const pre = dash < 0 ? '' : normalized.slice(dash + 1);
     const numbers = core.split('.').map((part) => Number.parseInt(part, 10) || 0);
     return { numbers, pre };
   };
@@ -293,8 +296,12 @@ export function compareVersions(a: string, b: string): number {
     const r = rightParts[i];
     if (l === undefined) return -1;
     if (r === undefined) return 1;
-    const both = /^\d+$/.test(l) && /^\d+$/.test(r);
-    const difference = both ? Number(l) - Number(r) : l.localeCompare(r);
+    const numericLeft = /^\d+$/.test(l);
+    const numericRight = /^\d+$/.test(r);
+    if (numericLeft !== numericRight) return numericLeft ? -1 : 1;
+    const difference = numericLeft
+      ? l.length - r.length || (l < r ? -1 : l > r ? 1 : 0)
+      : l < r ? -1 : l > r ? 1 : 0;
     if (difference !== 0) return difference;
   }
   return 0;

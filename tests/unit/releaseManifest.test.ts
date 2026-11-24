@@ -27,6 +27,26 @@ import {
 const root = resolve(__dirname, '../..');
 const read = (path: string) => readFileSync(resolve(root, path), 'utf8');
 
+describe('standalone Unix installers carry trusted release selection', () => {
+  const installers = ['install-ai17z-ubuntu.sh', 'install-ai17z-macos.sh'];
+  const body = (text: string, name: string) =>
+    new RegExp(`^${name}\\(\\) \\{[^\\n]*\\n([\\s\\S]*?)^\\}`, 'm').exec(text)?.[1];
+
+  it.each(installers)('%s carries the shared comparator byte for byte', (file) => {
+    const shared = body(read('packaging/unix/ai17z-release.sh'), 'ai17z_pick_tag');
+    expect(shared).toBeTruthy();
+    expect(body(read(file), 'pick_tag')).toBe(shared);
+  });
+
+  it.each(installers)('%s never fetches shell scripts', (file) => {
+    // Ignore the documented command for downloading the installer itself.
+    // Reject shell-script URLs and destinations, including variable-built URLs.
+    const code = read(file).replace(/^\s*#.*$/gm, '');
+    expect(code.match(/https?:\/\/[^\s"'`]*\.sh(?=[\s"'`?;|()]|$)/g) ?? []).toEqual([]);
+    expect(code.match(/\b(?:ai17z_fetch|curl|wget)\b[^\n]*\.sh(?=[\s"'`?;|()]|$)/g) ?? []).toEqual([]);
+  });
+});
+
 /**
  * One place names an asset, and everything else is held to it.
  *

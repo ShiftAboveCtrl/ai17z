@@ -245,7 +245,8 @@ export function releasesFromApi(body: unknown, now = Date.now()): ListedRelease[
   for (const item of body.slice(0, RELEASES_READ)) {
     if (!item || typeof item !== 'object') continue;
     const r = item as { tag_name?: unknown; name?: unknown; published_at?: unknown; draft?: unknown };
-    if (typeof r.tag_name !== 'string' || !r.tag_name) continue;
+    // Validate before comparison: parseInt would otherwise accept 99x as 99.
+    if (typeof r.tag_name !== 'string' || !/^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(r.tag_name)) continue;
     const released = typeof r.published_at === 'string' ? r.published_at : '';
     if (r.draft === true || (released && Date.parse(released) > now)) continue;
     releases.push({ tag: r.tag_name, title: typeof r.name === 'string' ? r.name : '', released });

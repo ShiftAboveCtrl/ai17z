@@ -31,7 +31,7 @@ STAGE=/tmp/stage
 rm -rf "$STAGE"; mkdir -p "$STAGE/packaging/ubuntu" "$STAGE/packaging/unix" "$STAGE/packaging/windows" "$STAGE/node_modules"
 cp packaging/ubuntu/ai17z packaging/ubuntu/ai17z.desktop packaging/ubuntu/postinst \
    packaging/ubuntu/postrm packaging/ubuntu/ai17z-lifecycle.sh packaging/ubuntu/ai17z-update.sh "$STAGE/packaging/ubuntu/"
-cp packaging/unix/ai17z-paths.sh "$STAGE/packaging/unix/"
+cp packaging/unix/ai17z-paths.sh packaging/unix/ai17z-release.sh "$STAGE/packaging/unix/"
 cp packaging/windows/ai17z-256.png "$STAGE/packaging/windows/" 2>/dev/null || true
 cp LICENSE README.md docker-compose.yml "$STAGE/" 2>/dev/null || true
 printf '{"version":"%s","name":"AI17Z Beta 1.0.0 (16)"}\n' "$VERSION" > "$STAGE/BUILD_INFO.json"

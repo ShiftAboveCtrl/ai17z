@@ -124,9 +124,12 @@ describe.skipIf(!hasBash)('the newest release this machine can install', () => {
     const start = text.indexOf('pick_tag() {');
     const end = text.indexOf('\n}\n', start);
     expect(start, `${installer} has no pick_tag`).toBeGreaterThan(-1);
+    // Give the bootstrap the same sibling helper layout as a checkout/package.
+    mkdirSync(join(room, 'packaging/unix'), { recursive: true });
+    writeFileSync(join(room, 'packaging/unix/ai17z-release.sh'), readFileSync(join(root, 'packaging/unix/ai17z-release.sh')));
     writeFileSync(join(room, 'pick.sh'), text.slice(start, end + 3));
     const pick = (release: string, template: string) =>
-      bash(`. ./pick.sh; RELEASE='${release}'; pick_tag "$(cat releases.json)" '${template}'`).stdout.trim();
+      bash(`. ./pick.sh; RELEASE='decoy'; pick_tag "$(cat releases.json)" '${template}' '${release}'`).stdout.trim();
     expect(pick('', 'AI17Z-macos-arm64-<version>.tar.gz')).toBe('v1.0.0-beta.85');
     expect(pick('', 'ai17z_<version>_amd64.deb')).toBe('v1.0.0-beta.86');
     expect(pick('v1.0.0-beta.86', 'AI17Z-macos-arm64-<version>.tar.gz')).toBe('v1.0.0-beta.86');

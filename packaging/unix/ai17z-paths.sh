@@ -1,4 +1,6 @@
 # shellcheck shell=bash
+# shellcheck source=packaging/unix/ai17z-release.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ai17z-release.sh"
 #
 # Where this installation's data is, resolved the same way by every Unix script.
 #
@@ -181,9 +183,8 @@ ai17z_fetch() { # destination url
 # The newest release's tag, from the first source whose list answers.
 #
 # Not /releases/latest, which is the server choosing; the list is read and the
-# first tag taken. It lists prereleases, which every AI17Z release so far is,
-# and never a draft to a caller that is not signed in. GitHub's Latest label
-# decides nothing.
+# highest version chosen by semver precedence. Prereleases are eligible and
+# drafts are excluded explicitly. GitHub's Latest label decides nothing.
 #
 # GitHub's API allows sixty anonymous requests an hour per address, and an
 # agent watching a GitHub repository from this machine spends from the same
@@ -200,15 +201,13 @@ ai17z_fetch() { # destination url
 # offers the newest it can actually install. Asset names carry the version, so
 # matching the name in the list cannot pick up another release's file.
 ai17z_latest_release_tag() { # [asset named with <version>]
-  local template="${1:-}" json tag asset index
+
+  local template="${1:-}" json tag index
   for index in "${!AI17Z_SOURCE_LISTS[@]}"; do
     json="$(curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --retry 3 \
       "${AI17Z_SOURCE_LISTS[$index]}" 2>/dev/null)" || continue
-    for tag in $(printf '%s' "$json" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/'); do
-      if [ -z "$template" ]; then printf '%s\n' "$tag"; return 0; fi
-      asset="${template//<version>/${tag#v}}"
-      if printf '%s' "$json" | grep -qF "\"${asset}\""; then printf '%s\n' "$tag"; return 0; fi
-    done
+    tag="$(ai17z_pick_tag "$json" "$template" '')"
+    if [ -n "$tag" ]; then printf '%s\n' "$tag"; return 0; fi
   done
 }
 
