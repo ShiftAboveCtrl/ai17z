@@ -79,6 +79,8 @@ export interface DevUpdateProjectRow {
   dailyCap: number;
   minSpacingMinutes: number;
   rehearse: boolean;
+  /** The longest post this project's updates may be: 280 unless the owner raised it. */
+  maxPostChars: number;
   senderTokenHash: string | null;
   senderTokenHint: string | null;
   senderTokenIssuedAt: string | null;
@@ -134,14 +136,15 @@ export async function createProject(input: {
   dailyCap: number;
   minSpacingMinutes: number;
   rehearse: boolean;
+  maxPostChars: number;
   senderTokenHash: string;
   senderTokenHint: string;
 }): Promise<DevUpdateProjectRow> {
   const row = await queryOne(
     `INSERT INTO dev_update_projects
        (owner_user_id, project_key, display_name, agent_id, account_id, mode, enabled, daily_cap,
-        min_spacing_minutes, rehearse, sender_token_hash, sender_token_hint, sender_token_issued_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now())
+        min_spacing_minutes, rehearse, max_post_chars, sender_token_hash, sender_token_hint, sender_token_issued_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, now())
      RETURNING *`,
     [
       input.ownerUserId,
@@ -154,6 +157,7 @@ export async function createProject(input: {
       input.dailyCap,
       input.minSpacingMinutes,
       input.rehearse,
+      input.maxPostChars,
       input.senderTokenHash,
       input.senderTokenHint,
     ],
@@ -197,6 +201,7 @@ export async function updateProject(
     dailyCap: number;
     minSpacingMinutes: number;
     rehearse: boolean;
+    maxPostChars: number;
   }>,
 ): Promise<DevUpdateProjectRow> {
   const columns: Record<string, string> = {
@@ -208,6 +213,7 @@ export async function updateProject(
     dailyCap: 'daily_cap',
     minSpacingMinutes: 'min_spacing_minutes',
     rehearse: 'rehearse',
+    maxPostChars: 'max_post_chars',
   };
   const sets: string[] = [];
   const params: unknown[] = [id];

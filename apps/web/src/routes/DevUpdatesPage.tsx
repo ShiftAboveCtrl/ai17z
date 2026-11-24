@@ -409,6 +409,7 @@ function ProjectWorkspace({
             handle={handle}
             rehearse={rehearsing}
             publishing={approvalPublishing}
+            maxPostChars={project.maxPostChars}
             onDecided={() => {
               pendingResource.reload();
               updates.reload();

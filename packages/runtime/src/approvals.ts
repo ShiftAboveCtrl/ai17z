@@ -12,6 +12,7 @@ import {
 import { decisionFingerprint } from './ownerLearning';
 import { PolicyConfig } from '@xbam/shared/contracts';
 import { validateOutput } from './validator';
+import { withPostLimit } from './devUpdateSafety';
 import { transactionAddresses } from './transactionReading';
 import type { TransactionReport } from '@xbam/prompts';
 
@@ -38,11 +39,16 @@ export async function approveJob(input: ApprovalDecisionInput): Promise<void> {
   const policyRow = job.policyVersionId
     ? await agentsRepo.getPolicyVersion(job.policyVersionId)
     : await agentsRepo.getActivePolicy(job.agentId);
-  const policy = PolicyConfig.parse(policyRow?.config ?? {});
+  const agentPolicy = PolicyConfig.parse(policyRow?.config ?? {});
 
   const proposed = (input.editedOutput ?? job.validatedOutput ?? job.generatedOutput ?? '').trim();
   if (!proposed) throw new ConflictError('There is no message text to approve.');
   const update = await devUpdatesRepo.updateForJob(job.id);
+  // A development update's post is held to its project's length limit and not
+  // to the agent's own: the validator below would otherwise trim a long post
+  // back to the policy's figure and write the shortened text as approved.
+  const project = update ? await devUpdatesRepo.getProject(update.projectId) : null;
+  const policy = project ? withPostLimit(agentPolicy, project.maxPostChars) : agentPolicy;
   const parts = update?.approvedParts ?? update?.parts;
   if (parts && input.editedOutput !== undefined && input.editedOutput !== parts[0]) {
     throw new ConflictError('Edit the complete thread in Development updates before approving it.');

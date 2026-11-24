@@ -11,7 +11,7 @@ import type { DevUpdate, DevUpdateProject } from '../../apps/web/src/lib/devUpda
 
 const project: DevUpdateProject = {
   id: 'project', projectKey: 'demo', displayName: 'Demo', agentId: 'agent', accountId: 'account',
-  mode: 'DRAFT', enabled: true, rehearse: false, dailyCap: 2, minSpacingMinutes: 60,
+  mode: 'DRAFT', enabled: true, rehearse: false, dailyCap: 2, minSpacingMinutes: 60, maxPostChars: 280,
   senderToken: { active: false, hint: null, issuedAt: null }, lastDispatchReason: null, createdAt: '', updatedAt: '',
 };
 const draft: DevUpdate = {

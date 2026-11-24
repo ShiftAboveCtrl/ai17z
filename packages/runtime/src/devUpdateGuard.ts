@@ -1,7 +1,7 @@
 import type { PolicyConfig } from '@xbam/shared/contracts';
 import { PipelineError } from '@xbam/shared';
 import { actions as actionsRepo, devUpdates as repo } from '@xbam/database';
-import { checkPostText } from './devUpdateSafety';
+import { POST_MAX_CHARS, checkPostText, withPostLimit } from './devUpdateSafety';
 import { validateOutput } from './validator';
 
 /**
@@ -44,8 +44,16 @@ export async function checkDevUpdateAtSend(input: {
   const raw = (input.raw ?? {}) as { origin?: unknown; devUpdateId?: unknown };
   if (raw.origin !== 'dev_update' || typeof raw.devUpdateId !== 'string') return;
 
-  const refusals = checkPostText(input.text);
-  const validation = validateOutput(input.text, input.policy, null, input.operatorText);
+  // The project's limit is the ceiling for this post, so it is read before the
+  // text is judged. A project that is gone is judged at the default and then
+  // refused below.
+  const update = await repo.getUpdate(raw.devUpdateId);
+  const project = update ? await repo.getProject(update.projectId) : null;
+  const maxPostChars = project?.maxPostChars ?? POST_MAX_CHARS;
+  const policy = withPostLimit(input.policy, maxPostChars);
+
+  const refusals = checkPostText(input.text, maxPostChars);
+  const validation = validateOutput(input.text, policy, null, input.operatorText);
   const rejects = validation.violations.filter((v) => v.severity === 'REJECT').map((v) => v.message);
   if (refusals.length > 0 || rejects.length > 0) {
     throw PipelineError.permanent(
@@ -54,8 +62,6 @@ export async function checkDevUpdateAtSend(input: {
     );
   }
 
-  const update = await repo.getUpdate(raw.devUpdateId);
-  const project = update ? await repo.getProject(update.projectId) : null;
   if (!update || !project) {
     throw PipelineError.permanent('dev_update_missing', 'The development update or its project was removed before sending.');
   }
@@ -64,8 +70,8 @@ export async function checkDevUpdateAtSend(input: {
   if (update.parts) {
     const parts = update.approvedParts ?? update.parts;
     const problems = parts.flatMap((part) => {
-      const checked = validateOutput(part, input.policy, null, input.operatorText);
-      return [...checkPostText(part).map((r) => r.message),
+      const checked = validateOutput(part, policy, null, input.operatorText);
+      return [...checkPostText(part, maxPostChars).map((r) => r.message),
         ...checked.violations.filter((v) => v.severity === 'REJECT').map((v) => v.message),
         ...(checked.output !== part ? ['A thread section needs a fresh review after a policy repair.'] : [])];
     });
@@ -103,7 +109,7 @@ export async function checkDevUpdateAtSend(input: {
   const ownerDecided = update.decidedBy !== null || gate?.status === 'APPROVED';
   if (!ownerDecided) {
     const reviews = (update.approvedParts ?? update.parts ?? [input.text]).flatMap((part) =>
-      validateOutput(part, input.policy, null, input.operatorText).violations.filter((v) => v.severity === 'REVIEW').map((v) => v.message));
+      validateOutput(part, policy, null, input.operatorText).violations.filter((v) => v.severity === 'REVIEW').map((v) => v.message));
     if (reviews.length > 0) {
       throw PipelineError.review('dev_update_needs_owner', `This development update needs the owner: ${reviews.join(' ')}`);
     }

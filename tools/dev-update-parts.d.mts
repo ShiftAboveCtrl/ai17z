@@ -1,1 +1,1 @@
-export function splitDevUpdate(text: string): string[];
+export function splitDevUpdate(text: string, limit?: number): string[];

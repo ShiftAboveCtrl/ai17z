@@ -53,7 +53,7 @@ import { TokenReveal } from '../../apps/web/src/routes/devUpdates/TokenReveal';
 import { setTransport } from '../../apps/web/src/lib/transport';
 
 function resource<T>(data: T, error: string | null = null): Resource<T> { return { data, error, loading: false, reload: vi.fn() }; }
-const project: DevUpdateProject = { id: 'p', projectKey: 'demo', displayName: 'Demo', agentId: 'a', accountId: 'c', enabled: true, rehearse: false, mode: 'DRAFT', dailyCap: 2, minSpacingMinutes: 240, senderToken: { active: true, hint: 'abcd', issuedAt: null }, lastDispatchReason: null, createdAt: '', updatedAt: '' };
+const project: DevUpdateProject = { id: 'p', projectKey: 'demo', displayName: 'Demo', agentId: 'a', accountId: 'c', enabled: true, rehearse: false, mode: 'DRAFT', dailyCap: 2, minSpacingMinutes: 240, maxPostChars: 280, senderToken: { active: true, hint: 'abcd', issuedAt: null }, lastDispatchReason: null, createdAt: '', updatedAt: '' };
 const draft: DevUpdate = { id: 'u', kind: 'FIX', title: 'A loaded draft', post: 'The reviewed post', summary: 'A change', why: 'It matters', evidence: [], proposedPost: 'The reviewed post', edited: false, status: 'PENDING_REVIEW', reason: null, url: null, jobId: null, history: [], decidedAt: null, dispatchedAt: null, finishedAt: null, updatedAt: '', createdAt: new Date().toISOString() };
 let trees: ReactTestRenderer[] = [];
 function mount(element: ReactElement) { let tree!: ReactTestRenderer; act(() => { tree = create(element); }); trees.push(tree); return tree; }

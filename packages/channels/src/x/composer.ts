@@ -357,6 +357,52 @@ export async function readyForTyping(editor: Locator): Promise<void> {
   }
 }
 
+/** The most any account may post without long posts on X. A longer post needs them. */
+export const X_PLAIN_POST_CHARS = 280;
+
+/**
+ * How the whole draft is typed.
+ *
+ * A short draft keeps its unhurried keystrokes. A long one, which a project may
+ * be set to post, is typed faster and given the time it needs: the action
+ * timeout Playwright applies to the whole call is 30 seconds, and a draft of a
+ * few thousand characters at 12 ms a key is longer than that, which would end
+ * as a cut-off draft for no reason but the clock.
+ */
+export function typingOptions(text: string): { delay: number; timeout: number } {
+  const chars = [...text].length;
+  const delay = chars <= 600 ? 12 : 3;
+  return { delay, timeout: Math.max(30_000, chars * (delay + 8) + 30_000) };
+}
+
+/**
+ * Waits for X to enable the post button, and says why when it does not.
+ *
+ * A draft over 280 characters that X will not post is X's own limit for the
+ * account: long posts are not on. That is not a glitch a second try can fix and
+ * it is never answered by cutting the text, so it ends the job with a sentence
+ * naming the cause. A short draft keeps the old, retryable answer.
+ */
+export async function requirePostButton(submit: Locator, text: string): Promise<void> {
+  const enabled = await submit
+    .isEnabled()
+    .then((ok) => ok || waitForEnabled(submit, 10_000))
+    .catch(() => false);
+  if (enabled) return;
+  const chars = [...text].length;
+  if (chars > X_PLAIN_POST_CHARS) {
+    throw PipelineError.permanent(
+      'post_too_long_for_account',
+      `X would not let this account post ${chars} characters: it only accepts a post over ${X_PLAIN_POST_CHARS} characters from an account with long posts enabled. Nothing was posted and the text was not shortened. Turn long posts on for the account, or lower this project's post length.`,
+      { chars },
+    );
+  }
+  throw PipelineError.retryable(
+    'post_button_disabled',
+    'X did not enable the post button within ten seconds of the text being typed.',
+  );
+}
+
 /** Empties the editor. Select-all inside it, never across the page. */
 async function clearComposer(page: Page, editor: Locator): Promise<void> {
   await editor.focus().catch(() => undefined);
@@ -389,7 +435,7 @@ export async function fillComposer(page: Page, editor: Locator, text: string): P
     await readyForTyping(editor);
 
     try {
-      await editor.type(text, { delay: 12 });
+      await editor.type(text, typingOptions(text));
     } catch {
       // A throw here means X replaced the node mid-type. The draft is partial
       // by definition, so fall through to the check, which will say so.
@@ -611,15 +657,12 @@ export async function postOwn(
     //
     // `aria-disabled` is what X actually sets, which Playwright's `isEnabled`
     // understands; the problem was never the predicate, only when it was asked.
-    const enabled = await submit
-      .isEnabled()
-      .then((ok) => ok || waitForEnabled(submit, 10_000))
-      .catch(() => false);
-    if (!enabled) {
-      throw PipelineError.retryable(
-        'post_button_disabled',
-        'X did not enable the post button within ten seconds of the text being typed.',
-      );
+    try {
+      await requirePostButton(submit, request.text);
+    } catch (error) {
+      // The draft is left in the composer otherwise, where the next post would find it.
+      await returnToIdle(page);
+      throw error;
     }
     /*
       From the first attempt to submit, every failure is ambiguous rather than

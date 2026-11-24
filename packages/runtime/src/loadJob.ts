@@ -5,11 +5,13 @@ import {
   accounts as accountsRepo,
   agents as agentsRepo,
   conversations as conversationsRepo,
+  devUpdates as devUpdatesRepo,
   events as eventsRepo,
   type ConversationRecord,
   type EventRecord,
 } from '@xbam/database';
 import type { Agent } from '@xbam/shared/contracts';
+import { withPostLimit } from './devUpdateSafety';
 
 export interface JobBundle {
   job: JobRecord;
@@ -39,10 +41,18 @@ export async function loadJobBundle(job: JobRecord): Promise<JobBundle> {
   const policyRow = job.policyVersionId
     ? await agentsRepo.getPolicyVersion(job.policyVersionId)
     : await agentsRepo.getActivePolicy(job.agentId);
-  const policy = PolicyConfigSchema.parse(policyRow?.config ?? {});
+  const agentPolicy = PolicyConfigSchema.parse(policyRow?.config ?? {});
 
   const event = await eventsRepo.getEvent(job.eventId);
   if (!event) throw PipelineError.permanent('event_missing', 'The source event for this job is gone.');
+
+  // A development update's post meets its project's length limit at every step
+  // that reads `policy.output.maxCharacters`, so the limit is carried in the
+  // policy the job runs under and never needs repeating at each of them.
+  const origin = (event.payload ?? {}) as { origin?: unknown; devUpdateId?: unknown };
+  const devUpdate = origin.origin === 'dev_update' && typeof origin.devUpdateId === 'string' ? await devUpdatesRepo.getUpdate(origin.devUpdateId) : null;
+  const devProject = devUpdate ? await devUpdatesRepo.getProject(devUpdate.projectId) : null;
+  const policy = devProject ? withPostLimit(agentPolicy, devProject.maxPostChars) : agentPolicy;
 
   const account = job.accountId ? await accountsRepo.getAccount(job.accountId) : null;
   const conversation = job.conversationId ? await conversationsRepo.getConversation(job.conversationId) : null;

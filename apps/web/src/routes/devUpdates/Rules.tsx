@@ -4,7 +4,10 @@ import { patch } from '@app/lib/api';
 import { ChoiceGroup, ChoiceOption, Field, Modal, SavedTick, Toggle } from '@app/components/ui';
 import {
   DAILY_CAP_CHOICES,
+  POST_MAX_CHARS,
+  POST_MAX_CHARS_CEILING,
   SPACING_CHOICES,
+  parseMaxPostChars,
   publishingState,
   spacingWords,
   type AgentPublishing,
@@ -12,7 +15,7 @@ import {
 } from '@app/lib/devUpdates';
 import { ProblemList, problemOf } from './parts';
 
-type Patch = Partial<Pick<DevUpdateProject, 'mode' | 'enabled' | 'dailyCap' | 'minSpacingMinutes' | 'rehearse'>>;
+type Patch = Partial<Pick<DevUpdateProject, 'mode' | 'enabled' | 'dailyCap' | 'minSpacingMinutes' | 'rehearse' | 'maxPostChars'>>;
 
 /**
  * How a project's updates reach the account.
@@ -37,6 +40,10 @@ export function Rules({
   const [saved, setSaved] = useState(false);
   const [problem, setProblem] = useState<string[] | null>(null);
   const [confirm, setConfirm] = useState<Patch | null>(null);
+  // Typed and saved on purpose, not on every keystroke: half a number is a limit nobody chose.
+  const [lengthText, setLengthText] = useState(String(project.maxPostChars));
+  const lengthParsed = parseMaxPostChars(lengthText);
+  const lengthChanged = 'value' in lengthParsed && lengthParsed.value !== project.maxPostChars;
   const where = handle ? `@${handle}` : 'the account';
   // What would still hold publishing once this project's own switch is off.
   // The confirmation names it, because "publish for real" over an agent that
@@ -165,6 +172,37 @@ export function Rules({
             ))}
           </select>
         </Field>
+        <div className="sm:col-span-2">
+          <Field
+            label="Post length"
+            hint={`The most characters one post may have, from ${POST_MAX_CHARS} to ${POST_MAX_CHARS_CEILING.toLocaleString('en-US')}. X only accepts a post over ${POST_MAX_CHARS} characters from an account that has long posts turned on. If X refuses a longer post, the update is reported as failed with that reason; it is never cut short or sent shorter than you approved. Leave it at ${POST_MAX_CHARS} unless ${where} has long posts.`}
+          >
+            <div className="flex flex-wrap items-center gap-3">
+              <input
+                className="field w-32"
+                inputMode="numeric"
+                autoComplete="off"
+                spellCheck={false}
+                value={lengthText}
+                disabled={saving}
+                aria-invalid={'problem' in lengthParsed}
+                onChange={(e) => setLengthText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && lengthChanged && 'value' in lengthParsed) void save({ maxPostChars: lengthParsed.value });
+                }}
+              />
+              <button
+                type="button"
+                className="btn-quiet"
+                disabled={saving || !lengthChanged}
+                onClick={() => 'value' in lengthParsed && void save({ maxPostChars: lengthParsed.value })}
+              >
+                Save length
+              </button>
+              {'problem' in lengthParsed && <span role="alert" className="text-xs text-signal-fail">{lengthParsed.problem}</span>}
+            </div>
+          </Field>
+        </div>
       </section>
 
       <ProblemList lines={problem} />

@@ -1295,3 +1295,161 @@ describe('development update threads on mock only', () => {
     expect(stored).toEqual({ parts: null, approved_parts: null });
   });
 });
+
+/**
+ * A project's post length. Mock accounts only: nothing here reaches X, and the
+ * text asserted on is what the executor handed the channel adapter.
+ */
+describe('long posts', () => {
+  const SENTENCE = 'replies keep their thread through a worker restart now, so long chats stop losing context halfway. ';
+  function longPost(chars: number): string {
+    let text = '';
+    while ([...text].length < chars) text += SENTENCE;
+    return [...text].slice(0, chars).join('').trim();
+  }
+  /** What the executor gave the channel, whatever the pipeline did on the way. */
+  function watchChannel(): { texts: () => string[] } {
+    const send = vi.spyOn(mockAdapter, 'executeAction');
+    return { texts: () => send.mock.calls.map(([, request]) => request.text) };
+  }
+
+  it('defaults to 280 and shows the limit to the owner and to the sender', async () => {
+    const ctx = await setup();
+    const { project, token } = await createProject(ctx);
+    expect(project.maxPostChars).toBe(280);
+    const sender = await app.inject({ method: 'GET', url: '/api/dev-updates/sender/project', headers: bearer(token) });
+    expect((sender.json() as Json).data.maxPostChars).toBe(280);
+  });
+
+  it('refuses a 2,000 character post with TOO_LONG on a default project, and stores nothing', async () => {
+    const ctx = await setup();
+    const { token } = await createProject(ctx);
+    const r = await submit(token, facts({ post: longPost(2000) }));
+    expect(r.statusCode, r.body).toBe(422);
+    expect((r.json() as Json).error.details.refusals.map((x: Json) => x.code)).toContain('TOO_LONG');
+    expect(await query('SELECT 1 FROM dev_updates')).toHaveLength(0);
+  });
+
+  it('accepts a 2,000 character post on a project set to 25,000, and the channel gets all of it', async () => {
+    // The agent's own policy stays at its default of 280: the project's limit is the ceiling.
+    const ctx = await setup();
+    const { project, token } = await createProject(ctx, { mode: 'AUTO', rehearse: false, minSpacingMinutes: 30, maxPostChars: 25_000 });
+    expect(project.maxPostChars).toBe(25_000);
+    const post = longPost(2000);
+
+    const update = await submitOk(token, facts({ post }));
+    expect(update.status).toBe('APPROVED');
+    expect(update.post, 'the stored post is not shortened by the agent policy').toBe(post);
+
+    const channel = watchChannel();
+    await runDevUpdates(5);
+    await settle(ctx);
+    const done = await ownerUpdate(ctx, update.id);
+    expect(done.status, done.reason).toBe('PUBLISHED');
+    expect(channel.texts()).toEqual([post]);
+    expect([...channel.texts()[0]!].length).toBeGreaterThan(1990);
+    expect((await actions.listJobActions(done.jobId))[0]!.payload.text).toBe(post);
+  });
+
+  it('still refuses a post over the raised limit', async () => {
+    const ctx = await setup();
+    const { token } = await createProject(ctx, { maxPostChars: 1000 });
+    expect((await submit(token, facts({ post: longPost(1000) }))).statusCode).toBe(201);
+    const r = await submit(token, facts({ post: longPost(1001) }));
+    expect(r.statusCode, r.body).toBe(422);
+    expect((r.json() as Json).error.details.refusals.map((x: Json) => x.code)).toContain('TOO_LONG');
+  });
+
+  it('lets the owner edit a draft up to the limit, and posts the edit whole', async () => {
+    const ctx = await setup();
+    const { token } = await createProject(ctx, { mode: 'DRAFT', rehearse: false, minSpacingMinutes: 30, maxPostChars: 25_000 });
+    const update = await submitOk(token);
+    const edited = longPost(2400);
+    const approved = await approve(ctx, update.id, { editedText: edited });
+    expect(approved.statusCode, approved.body).toBe(200);
+    expect((approved.json() as Json).data.post).toBe(edited);
+
+    const channel = watchChannel();
+    await runDevUpdates(5);
+    await settle(ctx);
+    expect((await ownerUpdate(ctx, update.id)).status).toBe('PUBLISHED');
+    expect(channel.texts()).toEqual([edited]);
+  });
+
+  it('refuses an owner edit past the limit with the same words', async () => {
+    const ctx = await setup();
+    const { token } = await createProject(ctx);
+    const update = await submitOk(token);
+    const r = await approve(ctx, update.id, { editedText: longPost(2400) });
+    expect(r.statusCode, r.body).toBe(422);
+    expect((r.json() as Json).error.details.refusals.map((x: Json) => x.code)).toContain('TOO_LONG');
+  });
+
+  it("keeps the whole post through the agent's own approval gate", async () => {
+    const ctx = await setup({ policy: { automation: { mode: 'REVIEW_BEFORE_ACTION', dryRunDefault: false } } as Partial<PolicyConfig> });
+    const { token } = await createProject(ctx, { mode: 'AUTO', rehearse: false, minSpacingMinutes: 30, maxPostChars: 25_000 });
+    const post = longPost(2000);
+    const update = await submitOk(token, facts({ post }));
+    await runDevUpdates(5);
+    await drainAgentJobs(ctx.agentId);
+    await reconcileDevUpdates(10);
+    const waiting = await ownerUpdate(ctx, update.id);
+    expect((await jobs.requireJob(waiting.jobId)).status).toBe('WAITING_FOR_APPROVAL');
+
+    const channel = watchChannel();
+    const r = await approve(ctx, update.id);
+    expect(r.statusCode, r.body).toBe(200);
+    expect((await jobs.requireJob(waiting.jobId)).validatedOutput, 'approval does not trim to the policy').toBe(post);
+    await settle(ctx);
+    expect((await ownerUpdate(ctx, update.id)).status).toBe('PUBLISHED');
+    expect(channel.texts()).toEqual([post]);
+  });
+
+  it('holds an approved long post back when the owner lowers the limit before it goes', async () => {
+    const ctx = await setup();
+    const { project, token } = await createProject(ctx, { mode: 'AUTO', rehearse: false, minSpacingMinutes: 30, maxPostChars: 25_000 });
+    const update = await submitOk(token, facts({ post: longPost(2000) }));
+    expect(update.status).toBe('APPROVED');
+    expect((await setProject(ctx, project.id, { maxPostChars: 280 })).maxPostChars).toBe(280);
+
+    const channel = watchChannel();
+    const [result] = await dispatchDevUpdates(5);
+    expect(result!.dispatched).toBe(false);
+    expect(result!.reason).toMatch(/the most this project allows is 280/);
+    expect((await ownerUpdate(ctx, update.id)).status).toBe('FAILED');
+    expect(channel.texts()).toEqual([]);
+  });
+
+  it.each([279, 0, -5, 25_001, 100_000, 280.5, '4000'])('refuses a post length of %s on create and on change', async (maxPostChars) => {
+    const ctx = await setup();
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/dev-updates/projects',
+      headers: ctx.owner,
+      payload: { projectKey: 'ai17z', displayName: 'AI17Z', agentId: ctx.agentId, accountId: ctx.accountId, maxPostChars },
+    });
+    expect(created.statusCode, created.body).toBeGreaterThanOrEqual(400);
+    expect(created.statusCode).toBeLessThan(500);
+
+    const { project } = await createProject(ctx);
+    const changed = await app.inject({ method: 'PATCH', url: `/api/dev-updates/projects/${project.id}`, headers: ctx.owner, payload: { maxPostChars } });
+    expect(changed.statusCode, changed.body).toBeGreaterThanOrEqual(400);
+    expect(changed.statusCode).toBeLessThan(500);
+    const [row] = await query<{ max_post_chars: number }>('SELECT max_post_chars FROM dev_update_projects WHERE id = $1', [project.id]);
+    expect(row!.max_post_chars).toBe(280);
+  });
+
+  it.each([280, 25_000])('accepts a post length of %s', async (maxPostChars) => {
+    const ctx = await setup();
+    const { project } = await createProject(ctx);
+    expect((await setProject(ctx, project.id, { maxPostChars })).maxPostChars).toBe(maxPostChars);
+  });
+
+  it('is held to 280 to 25,000 by the table itself', async () => {
+    const ctx = await setup();
+    const { project } = await createProject(ctx);
+    for (const bad of [279, 25_001]) {
+      await expect(query('UPDATE dev_update_projects SET max_post_chars = $2 WHERE id = $1', [project.id, bad])).rejects.toThrow(/max_post_chars/);
+    }
+  });
+});

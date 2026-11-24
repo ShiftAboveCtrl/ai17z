@@ -44,10 +44,11 @@ export function CopyButton({ value, label, className = '' }: { value: string; la
 }
 
 /** A ring that fills towards the limit, and the count beside it. */
-export function CharMeter({ length }: { length: number }) {
-  const fraction = Math.min(length / POST_MAX_CHARS, 1);
-  const over = length > POST_MAX_CHARS;
-  const near = !over && length > POST_MAX_CHARS - 20;
+export function CharMeter({ length, max = POST_MAX_CHARS }: { length: number; max?: number }) {
+  const fraction = Math.min(length / max, 1);
+  const over = length > max;
+  // Twenty characters of warning on a short post, a twentieth of the room on a long one.
+  const near = !over && length > max - Math.max(20, Math.round(max / 20));
   const r = 9;
   const circumference = 2 * Math.PI * r;
   const tone = over ? 'text-signal-fail' : near ? 'text-signal-wait' : 'text-signal-calm';
@@ -69,7 +70,7 @@ export function CharMeter({ length }: { length: number }) {
         />
       </svg>
       <span className={over ? 'text-signal-fail' : undefined}>
-        {length} / {POST_MAX_CHARS}
+        {length} / {max}
         <span className="sr-only">{over ? ', over the limit' : ' characters'}</span>
       </span>
     </span>

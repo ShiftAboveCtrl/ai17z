@@ -39,12 +39,15 @@ import { forgetPostMedia, forgetUnattachedPostMedia, mediaRefsProblem, storePost
 import { validateOutput } from './validator';
 import {
   DevUpdateSubmissionInput,
+  POST_MAX_CHARS,
+  POST_MAX_CHARS_CEILING,
   checkFacts,
   checkPostText,
   composePost,
   evidenceKeys,
   factFingerprint,
   textFingerprint,
+  withPostLimit,
   type DevUpdateRefusal,
 } from './devUpdateSafety';
 
@@ -111,6 +114,8 @@ export const DevUpdateProjectInput = z.object({
   dailyCap: z.number().int().min(1).max(6).default(2),
   minSpacingMinutes: z.number().int().min(30).max(1440).default(240),
   rehearse: z.boolean().default(true),
+  /** 280 unless the owner's account has long posts on X; see `withPostLimit`. */
+  maxPostChars: z.number().int().min(POST_MAX_CHARS).max(POST_MAX_CHARS_CEILING).default(POST_MAX_CHARS),
 });
 export type DevUpdateProjectInput = z.infer<typeof DevUpdateProjectInput>;
 
@@ -124,6 +129,7 @@ export const DevUpdateProjectPatch = z
     dailyCap: z.number().int().min(1).max(6),
     minSpacingMinutes: z.number().int().min(30).max(1440),
     rehearse: z.boolean(),
+    maxPostChars: z.number().int().min(POST_MAX_CHARS).max(POST_MAX_CHARS_CEILING),
   })
   .partial()
   .strict();
@@ -131,8 +137,9 @@ export type DevUpdateProjectPatch = z.infer<typeof DevUpdateProjectPatch>;
 
 export const DevUpdateDecisionInput = z
   .object({
-    editedText: z.string().trim().min(1).max(400).optional(),
-    editedParts: z.array(z.string().trim().min(1).max(560)).min(2).max(6).optional(),
+    // The project's own limit is applied when the edit is checked.
+    editedText: z.string().trim().min(1).max(POST_MAX_CHARS_CEILING).optional(),
+    editedParts: z.array(z.string().trim().min(1).max(POST_MAX_CHARS_CEILING)).min(2).max(6).optional(),
     note: z.string().trim().max(500).optional(),
   })
   .strict();
@@ -151,6 +158,7 @@ export function projectView(row: DevUpdateProjectRow) {
     dailyCap: row.dailyCap,
     minSpacingMinutes: row.minSpacingMinutes,
     rehearse: row.rehearse,
+    maxPostChars: row.maxPostChars,
     senderToken: row.senderTokenHash
       ? { active: true, hint: row.senderTokenHint, issuedAt: row.senderTokenIssuedAt }
       : { active: false, hint: null, issuedAt: null },
@@ -170,6 +178,7 @@ export function senderProjectView(row: DevUpdateProjectRow) {
     dailyCap: row.dailyCap,
     minSpacingMinutes: row.minSpacingMinutes,
     rehearse: row.rehearse,
+    maxPostChars: row.maxPostChars,
     lastDispatchReason: row.lastDispatchReason,
   };
 }
@@ -419,18 +428,34 @@ async function policyFor(agentId: string): Promise<PolicyConfig> {
 interface PublishRules {
   policy: PolicyConfig;
   operatorText: string;
+  /** The project's own limit, which is also the ceiling carried in `policy`. */
+  maxPostChars: number;
 }
 
-async function publishRules(agentId: string): Promise<PublishRules> {
-  const persona = await agentsRepo.getActivePersona(agentId);
-  return {
-    policy: await policyFor(agentId),
-    operatorText: [persona?.biography, persona?.customInstructions].filter(Boolean).join('\n'),
-  };
+/**
+ * The rules a project's posts are held to: the agent's own policy and wording,
+ * with the project's length limit as the one ceiling. Read from the project row
+ * it is given, so a caller holding the row under a lock checks against the
+ * limit as it is now.
+ */
+async function publishRules(project: Pick<DevUpdateProjectRow, 'agentId' | 'maxPostChars'>): Promise<PublishRules> {
+  const persona = await agentsRepo.getActivePersona(project.agentId);
+  return limitRules(
+    {
+      policy: await policyFor(project.agentId),
+      operatorText: [persona?.biography, persona?.customInstructions].filter(Boolean).join('\n'),
+    },
+    project,
+  );
 }
 
-async function checkPublishable(agentId: string, text: string): Promise<ReturnType<typeof checkAgainst>> {
-  return checkAgainst(await publishRules(agentId), text);
+/** Synchronous, so a hand-over can apply the locked row's limit to rules read before the lock. */
+function limitRules(base: { policy: PolicyConfig; operatorText: string }, project: Pick<DevUpdateProjectRow, 'maxPostChars'>): PublishRules {
+  return { ...base, policy: withPostLimit(base.policy, project.maxPostChars), maxPostChars: project.maxPostChars };
+}
+
+async function checkPublishable(project: DevUpdateProjectRow, text: string): Promise<ReturnType<typeof checkAgainst>> {
+  return checkAgainst(await publishRules(project), text);
 }
 
 /** Synchronous, so it can run inside a transaction on rules read before it. */
@@ -438,7 +463,7 @@ function checkAgainst(
   rules: PublishRules,
   text: string,
 ): { output: string; refusals: DevUpdateRefusal[]; reviews: string[] } {
-  const refusals = checkPostText(text);
+  const refusals = checkPostText(text, rules.maxPostChars);
   const reviews: string[] = [];
   const validation = validateOutput(text, rules.policy, null, rules.operatorText);
   for (const violation of validation.violations) {
@@ -526,8 +551,8 @@ export async function submitDevUpdate(project: DevUpdateProjectRow, raw: unknown
   let parts: string[] | undefined;
   let reviews: string[] = [];
   if (refusals.length === 0) {
-    const proposed = input.post ?? composePost(input, project.displayName, fact);
-    const checked = checkPartsAgainst(await publishRules(project.agentId), input.parts ?? [proposed]);
+    const proposed = input.post ?? composePost(input, project.displayName, fact, project.maxPostChars);
+    const checked = checkPartsAgainst(await publishRules(project), input.parts ?? [proposed]);
     refusals.push(...checked.refusals);
     postText = checked.output;
     if (checked.parts.length > 1) parts = checked.parts;
@@ -732,7 +757,7 @@ export async function approveDevUpdate(ownerId: string, updateId: string, raw: u
       throw new ConflictError('This update is already on its way and is not waiting for anybody.');
     }
     if (input.editedText) {
-      const checked = await checkPublishable(project.agentId, input.editedText);
+      const checked = await checkPublishable(project, input.editedText);
       if (checked.refusals.length) throw new DevUpdateRefusedError(checked.refusals);
     }
     await approveJob({ jobId: job.id, decidedBy: ownerId, editedOutput: input.editedText, note: input.note });
@@ -754,7 +779,7 @@ export async function approveDevUpdate(ownerId: string, updateId: string, raw: u
     throw new ConflictError(`This update is ${row.status.toLowerCase().replace(/_/g, ' ')}, so there is nothing to approve.`);
   }
   const text = input.editedText ?? row.postText;
-  const checked = checkPartsAgainst(await publishRules(project.agentId), input.editedParts ?? row.approvedParts ?? row.parts ?? [text]);
+  const checked = checkPartsAgainst(await publishRules(project), input.editedParts ?? row.approvedParts ?? row.parts ?? [text]);
   if (checked.refusals.length) throw new DevUpdateRefusedError(checked.refusals);
 
   const next = await repo.transition({
@@ -922,8 +947,8 @@ async function dispatchProject(projectId: string): Promise<DispatchResult | null
   // what the lock protects.
   const agent = await agentsRepo.getAgent(preflight.agentId);
   const account = await accountsRepo.getAccount(preflight.accountId);
-  const rules = await publishRules(preflight.agentId);
-  const policy = rules.policy;
+  const baseRules = await publishRules(preflight);
+  const policy = baseRules.policy;
   const version = agent?.pipelineVersionId
     ? await pipelinesRepo.getPipelineVersion(agent.pipelineVersionId)
     : await pipelinesRepo.getActivePipeline(preflight.agentId);
@@ -973,7 +998,9 @@ async function dispatchProject(projectId: string): Promise<DispatchResult | null
     const update = await repo.oldestApproved(tx, project.id);
     if (!update) return { result: { ...base, reason: 'Nothing approved is waiting.' } };
 
-    // Safety at the moment of sending, against the rules as they are now.
+    // Safety at the moment of sending, against the rules as they are now: the
+    // locked row's own limit, which the owner may have changed since the read above.
+    const rules = limitRules(baseRules, project);
     const text = update.approvedText ?? update.postText;
     const checked = checkPartsAgainst(rules, update.approvedParts ?? update.parts ?? [text]);
     if (checked.refusals.length > 0 || !checked.output) {

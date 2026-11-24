@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { fillComposer, readyForTyping, submitComposer } from '@xbam/channels';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { PipelineError } from '@xbam/shared';
+import { X_PLAIN_POST_CHARS, fillComposer, readyForTyping, requirePostButton, submitComposer, typingOptions } from '@xbam/channels';
 
 /**
  * What has to be true before AI17Z types into X, and before it submits.
@@ -48,7 +49,7 @@ interface EditorOptions {
 
 function fakeEditor(options: EditorOptions = {}) {
   const elsewhere = { name: 'x-typeahead' };
-  const state = { text: '', attempts: 0, calls: [] as string[], detached: options.detached ?? false };
+  const state = { text: '', attempts: 0, calls: [] as string[], typed: [] as unknown[], detached: options.detached ?? false };
   const bad = () => state.attempts < (options.badAttempts ?? 0);
 
   const self = {
@@ -75,8 +76,9 @@ function fakeEditor(options: EditorOptions = {}) {
         activeElement: stolen ? elsewhere : self,
       };
     },
-    async type(value: string) {
+    async type(value: string, typing?: unknown) {
       state.calls.push('type');
+      state.typed.push(typing);
       const broken = bad();
       state.attempts += 1;
       if (!broken) {
@@ -236,5 +238,81 @@ describe('submitting happens once', () => {
     expect(how).toBe('keyboard');
     expect(scope.clicks).toHaveLength(1);
     expect(page.keys).toHaveLength(1);
+  });
+});
+
+describe('a long post, for an account that has long posts', () => {
+  const LONG_POST = 'replies keep their thread through a worker restart now, so long chats stop losing context. '.repeat(40).trim();
+
+  it('types the whole text in one pass, with time to finish, and never cuts it', async () => {
+    expect([...LONG_POST].length).toBeGreaterThan(3000);
+    const editor = fakeEditor();
+    await expect(fillComposer(fakePage(editor) as never, editor as never, LONG_POST)).resolves.toBe(LONG_POST);
+    expect(editor.state.text).toBe(LONG_POST);
+    expect(editor.state.calls.filter((c) => c === 'type')).toHaveLength(1);
+    // Focused for the keystrokes, never clicked.
+    expect(editor.state.calls).toContain('focus');
+    expect(editor.state.calls).not.toContain('click');
+
+    const [typing] = editor.state.typed as Array<{ delay: number; timeout: number }>;
+    // Playwright's own 30 seconds would end a draft this long mid-sentence.
+    expect(typing!.timeout).toBeGreaterThan(typing!.delay * [...LONG_POST].length);
+  });
+
+  it('keeps the unhurried typing for an ordinary post', () => {
+    expect(typingOptions(DRAFT)).toEqual({ delay: 12, timeout: 30_000 + DRAFT.length * 20 });
+    expect(typingOptions('x'.repeat(25_000)).timeout).toBeGreaterThan(25_000 * 3);
+  });
+
+  describe('when X will not enable the post button', () => {
+    const disabledButton = () => {
+      const checks = { count: 0 };
+      return {
+        checks,
+        async isEnabled() {
+          checks.count += 1;
+          return false;
+        },
+      };
+    };
+
+    it('fails a draft over 280 characters at once, in a sentence, as something a retry cannot fix', async () => {
+      vi.useFakeTimers();
+      try {
+        const button = disabledButton();
+        const outcome = requirePostButton(button as never, LONG_POST).then(() => null, (error: unknown) => error);
+        await vi.advanceTimersByTimeAsync(11_000);
+        const error = (await outcome) as PipelineError;
+
+        expect(error).toBeInstanceOf(PipelineError);
+        expect(error.reason).toBe('post_too_long_for_account');
+        expect(error.errorClass).toBe('PERMANENT');
+        expect(error.message).toMatch(new RegExp(`${[...LONG_POST].length} characters`));
+        expect(error.message).toMatch(/long posts/i);
+        expect(error.message).toMatch(/not shortened/i);
+        // One ten second wait for the button, not a second round of anything.
+        expect(button.checks.count).toBeLessThan(60);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('keeps the old retryable answer for a draft within 280', async () => {
+      vi.useFakeTimers();
+      try {
+        const outcome = requirePostButton(disabledButton() as never, DRAFT).then(() => null, (error: unknown) => error);
+        await vi.advanceTimersByTimeAsync(11_000);
+        const error = (await outcome) as PipelineError;
+        expect(error.reason).toBe('post_button_disabled');
+        expect(error.errorClass).toBe('RETRYABLE');
+        expect([...DRAFT].length).toBeLessThanOrEqual(X_PLAIN_POST_CHARS);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('lets a long draft through when X enables the button', async () => {
+      await expect(requirePostButton({ isEnabled: async () => true } as never, LONG_POST)).resolves.toBeUndefined();
+    });
   });
 });

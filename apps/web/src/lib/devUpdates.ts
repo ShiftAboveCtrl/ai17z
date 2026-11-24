@@ -33,6 +33,8 @@ export interface DevUpdateProject {
   dailyCap: number;
   minSpacingMinutes: number;
   rehearse: boolean;
+  /** The longest post this project may make: 280 unless the owner raised it. */
+  maxPostChars: number;
   senderToken: { active: boolean; hint: string | null; issuedAt: string | null };
   lastDispatchReason: string | null;
   createdAt: string;
@@ -95,8 +97,24 @@ export interface RefusalRecord {
   at: string;
 }
 
-/** The most a post may be, matching the server's rule. */
+/** The most a post may be until its project's owner raises the limit, matching the server's rule. */
 export const POST_MAX_CHARS = 280;
+/** The most X takes from an account with long posts, and the most a project can be set to. */
+export const POST_MAX_CHARS_CEILING = 25_000;
+
+/**
+ * What an owner typed into the post length box, as the number to save, or why
+ * it cannot be saved. Whole numbers from 280 to 25,000, which is what the
+ * server accepts, so a value this passes is never refused for its size.
+ */
+export function parseMaxPostChars(raw: string): { value: number } | { problem: string } {
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return { problem: 'Enter a whole number of characters.' };
+  const value = Number(trimmed);
+  if (value < POST_MAX_CHARS) return { problem: `The least is ${POST_MAX_CHARS}, which is what every account can post.` };
+  if (value > POST_MAX_CHARS_CEILING) return { problem: `The most is ${POST_MAX_CHARS_CEILING.toLocaleString('en-US')}, which is the longest post X takes.` };
+  return { value };
+}
 
 /** Mirrors the server's limits, so a choice offered here is one the server accepts. */
 export const DAILY_CAP_CHOICES = [1, 2, 3, 4, 5, 6] as const;
@@ -158,7 +176,7 @@ const REFUSAL_WORDS: Record<string, string> = {
   ATTRIBUTION: 'It credited an assistant or automation.',
   HASHTAG_SPAM: 'It had more than one hashtag.',
   MENTION: 'It tagged a person or account.',
-  TOO_LONG: 'The post was longer than 280 characters.',
+  TOO_LONG: "The post was longer than this project's post length allows.",
   FILLER: 'It read like promotion, or had more than one link.',
   SENSITIVE: 'It described security or unreleased work.',
 };

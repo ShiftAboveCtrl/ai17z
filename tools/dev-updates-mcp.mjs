@@ -48,7 +48,7 @@ const INSTRUCTIONS = [
   'give the path of each file on this machine. The file is read here and uploaded to the owner\'s AI17Z, and the path itself is never sent.',
   'Attach only what may be public: nothing with a name, a token, an address, a private window or an unreleased screen in it.',
   'The owner sees the attachment next to the post before it goes out.',
-  'For a detailed update, provide parts instead of post: one to six sections, each at most 280 Unicode code points. The whole thread is reviewed together.',
+  'For a detailed update, provide parts instead of post: one to six sections, each within the project\'s post length. The whole thread is reviewed together.',
   'The owner reviews updates unless they chose auto mode, and posting is capped and spaced, so one good update beats several small ones.',
 ].join(' ');
 
@@ -111,9 +111,9 @@ export const TOOLS = [
         },
         post: {
           type: 'string',
-          maxLength: 280,
+          maxLength: 25000,
           description:
-            'Optional. The post itself, in the developer\'s own casual voice, 280 characters at most. Leave it out and AI17Z writes one from the facts.',
+            'Optional. The post itself, in the developer\'s own casual voice. It is 280 characters at most unless the owner has raised this project\'s post length (the project\'s maxPostChars says how far, up to 25,000); a post over the limit is refused, never cut. Leave it out and AI17Z writes one from the facts.',
         },
         publicConfirmed: {
           type: 'boolean',
@@ -121,8 +121,8 @@ export const TOOLS = [
         },
         parts: {
           type: 'array', minItems: 1, maxItems: 6,
-          description: 'Optional thread in publishing order. Use instead of post. Each section must be at most 280 Unicode code points and safe to publish. The owner approves the complete thread.',
-          items: { type: 'string', minLength: 1, maxLength: 280 },
+          description: 'Optional thread in publishing order. Use instead of post. Each section must be within the project\'s post length (280 Unicode code points unless the owner raised it) and safe to publish. The owner approves the complete thread.',
+          items: { type: 'string', minLength: 1, maxLength: 25000 },
         },
       },
     },

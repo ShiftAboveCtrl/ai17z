@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { sha256Hex } from '@xbam/shared';
+import type { PolicyConfig } from '@xbam/shared/contracts';
 
 /**
  * What a development update may say, decided before anything is stored.
@@ -32,6 +33,11 @@ export type DevUpdateEvidenceType = (typeof DEV_UPDATE_EVIDENCE_TYPES)[number];
 /** References that identify one piece of work, so the same work is not announced twice. */
 const KEYED_EVIDENCE: readonly DevUpdateEvidenceType[] = ['COMMIT', 'PULL_REQUEST', 'ISSUE', 'RELEASE'];
 
+/** What any account can post, and every project's limit until its owner raises it. */
+export const POST_MAX_CHARS = 280;
+/** The most X takes in one post from an account with long posts enabled. */
+export const POST_MAX_CHARS_CEILING = 25_000;
+
 export const DevUpdateSubmissionInput = z.object({
   projectKey: z.string().trim().toLowerCase().min(2).max(63),
   kind: z.enum(['FEATURE', 'FIX', 'IMPROVEMENT', 'MILESTONE', 'RELEASE']),
@@ -53,10 +59,15 @@ export const DevUpdateSubmissionInput = z.object({
    * A string rather than a boolean so it cannot be satisfied by a default.
    */
   disclosure: z.string(),
-  /** A post the sender wrote. Absent means AI17Z composes one from the facts. */
-  post: z.string().trim().min(1).max(400).optional(),
+  /**
+   * A post the sender wrote. Absent means AI17Z composes one from the facts.
+   * The schema allows what any project may be set to; the project's own limit
+   * is applied by `checkPostText`, so a post over it is refused with TOO_LONG
+   * rather than failing to parse.
+   */
+  post: z.string().trim().min(1).max(POST_MAX_CHARS_CEILING).optional(),
   /** Explicit thread text. A one-part array keeps the ordinary post shape. */
-  parts: z.array(z.string().trim().min(1).max(560)).min(1).max(6).optional(),
+  parts: z.array(z.string().trim().min(1).max(POST_MAX_CHARS_CEILING)).min(1).max(6).optional(),
   /**
    * Files uploaded first (`POST /api/dev-updates/sender/media`) that go with the
    * post, by the id that upload returned. Ids, never paths: nothing here names
@@ -111,7 +122,21 @@ export interface DevUpdateRefusal {
 }
 
 export const PUBLIC_DISCLOSURE = 'PUBLIC';
-export const POST_MAX_CHARS = 280;
+
+/**
+ * The agent's policy as a development update post must meet it.
+ *
+ * The project's limit is the one ceiling for its posts. A project left at 280
+ * keeps the policy exactly as the agent has it, so nothing changes for anybody
+ * who did not ask. A raised limit replaces the policy's own `maxCharacters` for
+ * this post only: otherwise the validator would trim a long post back to the
+ * policy's figure, silently, after every other check had passed it. Idempotent,
+ * and the agent's stored policy is never touched.
+ */
+export function withPostLimit(policy: PolicyConfig, maxPostChars: number): PolicyConfig {
+  if (maxPostChars <= POST_MAX_CHARS || policy.output.maxCharacters === maxPostChars) return policy;
+  return { ...policy, output: { ...policy.output, maxCharacters: maxPostChars } };
+}
 
 export { splitDevUpdate } from '../../../tools/dev-update-parts.mjs';
 
@@ -332,11 +357,18 @@ const ATTRIBUTION_PATTERNS: readonly RegExp[] = [
 const FILLER =
   /\b(?:excited to (?:announce|share)|thrilled to|game[-\s]?changer|revolutioni[sz]\w*|stay tuned|big things (?:are )?coming|huge update|massive update|next level|don'?t miss (?:out|it)|link in bio|smash that|let'?s go+|buckle up|the future is here)\b/i;
 
-export function checkPostText(text: string): DevUpdateRefusal[] {
+/**
+ * Every rule that applies to the words of one post.
+ *
+ * `maxChars` is the project's own limit. Counted per code point with a link at
+ * its full length, which is stricter than X's own count (it shortens every link
+ * to 23 characters), so a post that passes here is never longer than X reads it.
+ */
+export function checkPostText(text: string, maxChars: number = POST_MAX_CHARS): DevUpdateRefusal[] {
   const out: DevUpdateRefusal[] = [];
   const chars = [...text].length;
-  if (chars > POST_MAX_CHARS) {
-    out.push({ code: 'TOO_LONG', field: 'post', message: `The post is ${chars} characters and the most is ${POST_MAX_CHARS}.` });
+  if (chars > maxChars) {
+    out.push({ code: 'TOO_LONG', field: 'post', message: `The post is ${chars} characters and the most this project allows is ${maxChars}.` });
   }
   if (chars < 30 || wordCount(text) < 6) {
     out.push({ code: 'NOT_MEANINGFUL', field: 'post', message: 'The post is too short to tell anybody anything.' });
@@ -498,8 +530,8 @@ const TEMPLATES: Record<string, Template[]> = {
   ],
 };
 
-function fits(text: string): boolean {
-  return [...text].length <= POST_MAX_CHARS;
+function fits(text: string, maxChars: number): boolean {
+  return [...text].length <= maxChars;
 }
 
 /**
@@ -515,6 +547,7 @@ export function composePost(
   input: Pick<DevUpdateSubmissionInput, 'kind' | 'title' | 'summary' | 'why'>,
   projectName: string,
   seed: string,
+  maxChars: number = POST_MAX_CHARS,
 ): string {
   const templates = TEMPLATES[input.kind] ?? TEMPLATES.FEATURE!;
   const start = parseInt(seed.slice(0, 8), 16) % templates.length;
@@ -523,11 +556,11 @@ export function composePost(
   for (const variant of [facts, shorter]) {
     for (let i = 0; i < templates.length; i += 1) {
       const text = templates[(start + i) % templates.length]!(variant).replace(/\s+/g, ' ').trim();
-      if (fits(text)) return text;
+      if (fits(text, maxChars)) return text;
     }
   }
   // Nothing fitted: the title and the first sentence of the summary, cut at a word.
   let text = `${sentence(facts.title)} ${shorter.summary}`;
-  while (!fits(text)) text = text.replace(/\s+\S+$/, '');
+  while (!fits(text, maxChars)) text = text.replace(/\s+\S+$/, '');
   return text;
 }

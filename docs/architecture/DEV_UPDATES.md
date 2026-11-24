@@ -35,7 +35,8 @@ words.
 - **A post never says who wrote it.** Naming Claude, crediting an assistant,
   agent or automation, "AI-generated", "auto-posted", a robot emoji: all
   refused. So are more than one hashtag, any @mention, more than one link,
-  promotional filler and anything over 280 characters.
+  promotional filler and anything over the project's post length (280
+  characters unless the owner raised it, see "Long posts" below).
 - **Security and unreleased work are never shared.** Vulnerabilities,
   exploits, auth bypasses, CVEs, security fixes, incidents and leaks, and
   anything the facts call unreleased, unannounced, embargoed, under NDA,
@@ -63,10 +64,31 @@ words.
 | MCP server (plain Node, no dependencies) | `tools/dev-updates-mcp.mjs` |
 | Owner CLI | `tools/dev-updates.mts` (`npm run dev-updates -- help`) |
 
+## Long posts
+
+Each project has a `maxPostChars` (migration 0150): 280 by default, which is
+what every account can post, and settable by the owner from 280 to 25,000 in
+the Rules tab or with `npm run dev-updates -- set <id> --max-post-chars N`. X
+only accepts a post over 280 characters from an account with long posts
+enabled, so the owner raises it only for such an account.
+
+The limit is the one ceiling for the project's posts, and it is carried in the
+policy the post is judged under (`withPostLimit`), so it holds at every step:
+the submission and edit checks, the dispatch re-check, the review queue's
+approval, the pipeline bundle (`loadJobBundle`) and the send-time guard. The
+agent's stored policy is not changed, and a project left at 280 is judged under
+the agent's own policy exactly as before. Characters are counted per code point
+with a link at its full length, which is never less than X's own count.
+
+The X adapter types the whole text into the focused composer. If X will not
+enable the post button for a draft over 280 characters, the job fails at once
+with a sentence saying the account does not take long posts. It is not retried
+and the text is never shortened.
+
 ## Threads
 
 Send `parts` instead of `post` for a detailed update: one to six strings, each
-at most 280 Unicode code points. A one-part array becomes the existing single
+within the project's post length (280 Unicode code points unless raised). A one-part array becomes the existing single
 post representation. Multi-part updates retain their proposed and approved
 parts in migration 0143. The Review screen shows every part and its count;
 one owner decision approves the complete thread. Edit it before dispatch with

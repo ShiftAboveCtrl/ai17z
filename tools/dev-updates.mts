@@ -4,6 +4,7 @@
  *   npm run dev-updates -- projects
  *   npm run dev-updates -- create --key ai17z --name AI17Z --agent <agentId> --account <accountId>
  *   npm run dev-updates -- set <projectId> --mode AUTO --cap 2 --spacing 240 --rehearse false
+ *   npm run dev-updates -- set <projectId> --max-post-chars 4000   long posts, for an account that has them on X (280 to 25000)
  *   npm run dev-updates -- token <projectId>        issue a new sender token (the old one stops working)
  *   npm run dev-updates -- revoke <projectId>       remove the sender token
  *   npm run dev-updates -- list [--project <id>] [--status PENDING_REVIEW]
@@ -114,7 +115,7 @@ async function main(): Promise<void> {
     );
     return;
   }
-  if (command === 'split') return print(splitDevUpdate(need(flags.text, '--text')));
+  if (command === 'split') return print(splitDevUpdate(need(flags.text, '--text'), flags['max-post-chars'] ? int(flags['max-post-chars']) : undefined));
   const token = await ownerToken();
 
   switch (command) {
@@ -129,6 +130,7 @@ async function main(): Promise<void> {
         ...(flags.mode ? { mode: flags.mode.toUpperCase() } : {}),
         ...(flags.cap ? { dailyCap: int(flags.cap) } : {}),
         ...(flags.spacing ? { minSpacingMinutes: int(flags.spacing) } : {}),
+        ...(flags['max-post-chars'] ? { maxPostChars: int(flags['max-post-chars']) } : {}),
         ...(flags.rehearse !== undefined ? { rehearse: bool(flags.rehearse) } : {}),
       });
       print(created.project);
@@ -144,6 +146,7 @@ async function main(): Promise<void> {
           ...(flags.mode ? { mode: flags.mode.toUpperCase() } : {}),
           ...(flags.cap ? { dailyCap: int(flags.cap) } : {}),
           ...(flags.spacing ? { minSpacingMinutes: int(flags.spacing) } : {}),
+          ...(flags['max-post-chars'] ? { maxPostChars: int(flags['max-post-chars']) } : {}),
           ...(flags.rehearse !== undefined ? { rehearse: bool(flags.rehearse) } : {}),
           ...(flags.enabled !== undefined ? { enabled: bool(flags.enabled) } : {}),
         }),

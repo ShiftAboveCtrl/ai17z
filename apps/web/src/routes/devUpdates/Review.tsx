@@ -23,6 +23,7 @@ export function Review({
   handle,
   rehearse,
   publishing,
+  maxPostChars = POST_MAX_CHARS,
   onDecided,
 }: {
   updates: DevUpdate[];
@@ -30,6 +31,8 @@ export function Review({
   handle: string | null;
   rehearse: boolean;
   publishing: PublishingState;
+  /** The project's own limit on a post; 280 unless the owner raised it. */
+  maxPostChars?: number;
   onDecided: () => void;
 }) {
   if (updates.length === 0) {
@@ -44,7 +47,7 @@ export function Review({
     <ol className="space-y-5">
       {updates.map((update) => (
         <li key={update.id}>
-          <Draft key={JSON.stringify([update.post, update.parts])} update={update} agent={agent} handle={handle} rehearse={rehearse} publishing={publishing} onDecided={onDecided} />
+          <Draft key={JSON.stringify([update.post, update.parts])} update={update} agent={agent} handle={handle} rehearse={rehearse} publishing={publishing} maxPostChars={maxPostChars} onDecided={onDecided} />
         </li>
       ))}
     </ol>
@@ -57,6 +60,7 @@ function Draft({
   handle,
   rehearse,
   publishing,
+  maxPostChars,
   onDecided,
 }: {
   update: DevUpdate;
@@ -64,6 +68,7 @@ function Draft({
   handle: string | null;
   rehearse: boolean;
   publishing: PublishingState;
+  maxPostChars: number;
   onDecided: () => void;
 }) {
   const [mode, setMode] = useState<'read' | 'edit' | 'reject'>('read');
@@ -110,7 +115,7 @@ function Draft({
     onDecided();
   };
 
-  const tooLong = update.parts ? parts.some((part) => [...part.trim()].length > POST_MAX_CHARS || !part.trim()) : [...text.trim()].length > POST_MAX_CHARS;
+  const tooLong = update.parts ? parts.some((part) => [...part.trim()].length > maxPostChars || !part.trim()) : [...text.trim()].length > maxPostChars;
   const disabled = busy || decided !== null || update.status !== 'PENDING_REVIEW';
 
   return (
@@ -167,7 +172,7 @@ function Draft({
                     {mode === 'edit'
                       ? <label htmlFor={`${editId}-${index}`} className="eyebrow text-bone-dim">Part {index + 1} of {parts.length}</label>
                       : <span className="eyebrow text-bone-dim">Part {index + 1} of {parts.length}</span>}
-                    <CharMeter length={[...part.trim()].length} />
+                    <CharMeter length={[...part.trim()].length} max={maxPostChars} />
                   </div>
                   <PostPreview agent={agent} handle={handle} text={part} edited={update.edited} media={index === 0 ? update.media : undefined}>
                     {mode === 'edit' ? <textarea id={`${editId}-${index}`} className="field mt-3 min-h-[140px] resize-y text-[15px] leading-relaxed"
@@ -186,13 +191,12 @@ function Draft({
                   id={editId}
                   className="field min-h-[140px] resize-y text-[15px] leading-relaxed"
                   value={text}
-                  maxLength={400}
                   autoFocus
                   disabled={disabled}
                   onChange={(e) => setText(e.target.value)}
                 />
                 <div className="flex justify-end">
-                  <CharMeter length={[...text.trim()].length} />
+                  <CharMeter length={[...text.trim()].length} max={maxPostChars} />
                 </div>
               </div>
             ) : undefined}

@@ -250,6 +250,7 @@ const project = (id: string): DevUpdateProject => ({
   dailyCap: 2,
   minSpacingMinutes: 240,
   rehearse: true,
+  maxPostChars: 280,
   senderToken: { active: true, hint: 'abcd', issuedAt: null },
   lastDispatchReason: null,
   createdAt: '',
