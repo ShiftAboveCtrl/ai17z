@@ -26,13 +26,21 @@ export interface CapabilityApprovalRow {
 }
 
 export async function propose(input: Pick<CapabilityApprovalRow,
-  'agentId' | 'capabilityId' | 'input' | 'source' | 'sourceRef' | 'why' | 'jobId' | 'accountId' | 'audience' | 'origin'>): Promise<void> {
-  await query(`INSERT INTO capability_approvals
-    (agent_id,capability_id,input,input_sha256,source,source_ref,why,job_id,account_id,audience,origin)
-    VALUES ($1,$2,$3::jsonb,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
-    ON CONFLICT (agent_id,capability_id,source,source_ref,input_sha256) DO NOTHING`,
-  [input.agentId, input.capabilityId, JSON.stringify(input.input), sha256Hex(canonicalJson(input.input)),
-    input.source, input.sourceRef, input.why, input.jobId, input.accountId, input.audience, JSON.stringify(input.origin)]);
+  'agentId' | 'capabilityId' | 'input' | 'source' | 'sourceRef' | 'why' | 'jobId' | 'accountId' | 'audience' | 'origin'>): Promise<boolean> {
+  return withTransaction(async tx => {
+    // Serialize per agent so concurrent public replies cannot overfill the queue.
+    await tx.query('SELECT id FROM agents WHERE id=$1 FOR UPDATE', [input.agentId]);
+    const count = await tx.one<{ count: number }>(`SELECT count(*) AS count FROM capability_approvals
+      WHERE agent_id=$1 AND status IN ('PENDING','APPROVED') AND expires_at>now()`, [input.agentId]);
+    if (Number(count?.count) >= 20) return false;
+    await tx.query(`INSERT INTO capability_approvals
+      (agent_id,capability_id,input,input_sha256,source,source_ref,why,job_id,account_id,audience,origin)
+      VALUES ($1,$2,$3::jsonb,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
+      ON CONFLICT (agent_id,capability_id,source,source_ref,input_sha256) DO NOTHING`,
+    [input.agentId, input.capabilityId, JSON.stringify(input.input), sha256Hex(canonicalJson(input.input)),
+      input.source, input.sourceRef, input.why, input.jobId, input.accountId, input.audience, JSON.stringify(input.origin)]);
+    return true;
+  });
 }
 
 export async function listForAgent(agentId: string): Promise<CapabilityApprovalRow[]> {
@@ -47,19 +55,20 @@ export async function get(id: string, agentId: string): Promise<CapabilityApprov
 
 export async function decide(input: {
   id: string; agentId: string; ownerId: string; decision: 'APPROVE' | 'REJECT'; reason?: string;
-}): Promise<void> {
-  await withTransaction(async tx => {
+}): Promise<boolean> {
+  return withTransaction(async tx => {
     const row = await tx.one(`UPDATE capability_approvals SET
       status=CASE WHEN expires_at<=now() THEN 'EXPIRED' ELSE $4 END,
       decided_by=$3, decided_at=now(), decision_reason=$5
       WHERE id=$1 AND agent_id=$2 AND status='PENDING' RETURNING id,status`,
     [input.id, input.agentId, input.ownerId, input.decision === 'APPROVE' ? 'APPROVED' : 'DENIED', input.reason ?? null]);
-    if (!row) return;
+    if (!row) return false;
     await tx.query(`INSERT INTO audit_events(actor_user_id,action,entity_type,entity_id,data)
       VALUES($1,$2,'capability_approval',$3,$4::jsonb)`,
     [input.ownerId, row.status === 'EXPIRED' ? 'capability.approval.expired'
       : input.decision === 'APPROVE' ? 'capability.approval.approved' : 'capability.approval.denied',
       input.id, JSON.stringify({ agentId: input.agentId })]);
+    return true;
   });
 }
 

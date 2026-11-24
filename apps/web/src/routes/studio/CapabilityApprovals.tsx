@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import type { CapabilityApprovalStatus, CapabilityApprovalSource } from '@xbam/shared/contracts';
-import { usePolling, useResource } from '@app/lib/hooks';
-import { post } from '@app/lib/api';
-import { EmptyState, RetryablePanel, Spinner } from '@app/components/ui';
+import { useElapsed, usePolling, useResource } from '@app/lib/hooks';
+import { ApiError, post } from '@app/lib/api';
+import { EmptyState, RetryablePanel, Working } from '@app/components/ui';
 import { Card, Panel } from './shared';
 
 interface Approval {
@@ -13,6 +13,8 @@ interface Approval {
   why: string;
   expiresAt: string;
   resultReason: string | null;
+  inputPreview: string;
+  inputTruncated: boolean;
 }
 
 const statuses: Record<CapabilityApprovalStatus, string> = {
@@ -27,6 +29,8 @@ export function CapabilityApprovals({ agentId }: { agentId: string }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const waiting = queue.data?.some(row => row.status === 'APPROVED') ?? false;
+  const waitingSeconds = useElapsed(waiting);
+  const loadingSeconds = useElapsed(queue.loading);
   usePolling(queue.reload, 5000, waiting);
 
   const decide = async (id: string, decision: 'APPROVE' | 'REJECT', reason?: string) => {
@@ -35,15 +39,17 @@ export function CapabilityApprovals({ agentId }: { agentId: string }) {
     try {
       await post(`${path}/${id}/decision`, { decision, ...(reason ? { reason } : {}) });
       queue.reload();
-    } catch {
-      setError('The decision could not be saved. Refresh the queue before trying again.');
+    } catch (error) {
+      setError(error instanceof ApiError && error.status === 409 ? error.message
+        : 'The decision could not be saved. Refresh the queue before trying again.');
+      queue.reload();
     } finally { setBusy(null); }
   };
 
   return <Panel title="Capability approvals"
-    lede="Approve one saved call or reject it with a reason. Calls expire after 24 hours. Current permissions, availability, quotas and PAUSE ALL still apply."
+    lede="Approve one saved call or reject it with a reason. Calls expire after 24 hours. Current permissions, availability, quotas and PAUSE ALL still apply. A refusal, including a pause or exhausted quota, permanently stops this call. Ask the agent for a new proposal after resolving the gate."
     action={<button type="button" className="btn-ghost min-h-12" onClick={queue.reload}>Refresh approvals</button>}>
-    {queue.loading && !queue.data && <Spinner />}
+    {queue.loading && !queue.data && <Working label="Loading capability approvals" seconds={loadingSeconds} />}
     {queue.error && <RetryablePanel title="Approvals could not be loaded" detail="Refresh to try again." onRetry={queue.reload} />}
     {error && <p role="alert" className="mb-3 text-bone">{error}</p>}
     {queue.data?.length === 0 && <EmptyState title="No capability approvals" detail="Calls that need your decision will appear here." />}
@@ -51,6 +57,11 @@ export function CapabilityApprovals({ agentId }: { agentId: string }) {
       {queue.data?.map(row => <Card key={row.id} title={row.capabilityId}
         meta={`${sources[row.source]} · ${statuses[row.status]}`}>
         <p className="break-words text-sm text-bone-dim">{row.why}</p>
+        <p className="mt-3 text-sm text-bone-dim">Saved call input (secrets redacted)</p>
+        <pre className="mt-2 min-w-0 whitespace-pre-wrap break-words text-sm text-bone">{row.inputPreview}</pre>
+        {row.inputTruncated && <p className="mt-2 break-words text-sm text-bone-faint">Preview truncated after 12,000 characters.</p>}
+        {row.status === 'APPROVED' && <Working label="Waiting for the approved call to settle" seconds={waitingSeconds}
+          slowHint="Current gates still apply. Use PAUSE ALL to stop pending execution." />}
         <p className="mt-2 break-words text-sm text-bone-faint">Expires {new Date(row.expiresAt).toLocaleString()}</p>
         {row.resultReason && <p className="mt-2 break-words text-sm text-bone-dim">{row.resultReason}</p>}
         {row.status === 'PENDING' && <div className="mt-3 space-y-3">

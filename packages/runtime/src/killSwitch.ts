@@ -25,7 +25,7 @@ import { ops as opsRepo } from '@xbam/database';
 const log = createLogger('kill-switch');
 
 /** The one row. Named rather than derived, so both readers cannot disagree. */
-const KEY = 'runtime.pauseAll';
+export const PAUSE_ALL_SETTING_KEY = 'runtime.pauseAll';
 
 export interface PauseState {
   paused: boolean;
@@ -39,7 +39,7 @@ const RELEASED: PauseState = { paused: false, since: null, by: null, reason: '' 
 
 export async function pauseState(): Promise<PauseState> {
   try {
-    const stored = await opsRepo.getSetting<PauseState>(KEY);
+    const stored = await opsRepo.getSetting<PauseState>(PAUSE_ALL_SETTING_KEY);
     return stored?.paused ? stored : RELEASED;
   } catch {
     // A database that cannot be read is not evidence that everything is
@@ -53,7 +53,7 @@ export async function setPauseAll(input: { paused: boolean; by: string | null; r
   const next: PauseState = input.paused
     ? { paused: true, since: new Date().toISOString(), by: input.by, reason: input.reason ?? 'Paused by the owner.' }
     : RELEASED;
-  await opsRepo.setSetting(KEY, next);
+  await opsRepo.setSetting(PAUSE_ALL_SETTING_KEY, next);
   log.warn(input.paused ? 'everything paused' : 'everything released', { by: input.by });
   return next;
 }

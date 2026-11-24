@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { capabilityPermissions, query } from '@xbam/database';
+import { accounts, capabilityApprovals, capabilityInvocations, capabilityPermissions, query } from '@xbam/database';
 import { defineCapability, registerCapability, resetCapabilitiesForTest } from '@xbam/tools';
 import { buildServer } from '../../apps/api/src/server';
 import { runCapabilityLoop } from '../../packages/runtime/src/capabilityLoop';
@@ -15,6 +15,7 @@ let app: FastifyInstance;
 let runs = 0;
 let received: unknown;
 let receivedOrigin: unknown;
+let receivedConfig: unknown;
 let ready = true;
 let duringReadiness: (() => Promise<void>) | undefined;
 let failWrite = false;
@@ -24,6 +25,7 @@ beforeEach(() => {
   runs = 0;
   received = null;
   receivedOrigin = null;
+  receivedConfig = null;
   ready = true;
   duringReadiness = undefined;
   failWrite = false;
@@ -31,20 +33,22 @@ beforeEach(() => {
   registerCapability(defineCapability({
     id: 'test.publish', name: 'Publish report', description: 'Publish a report.',
     category: 'CREATE', effect: 'WRITE', risk: 'HIGH', modelCallable: true,
-    input: z.object({ text: z.string() }), output: z.object({ published: z.boolean() }), timeoutMs: 1000,
+    input: z.object({ text: z.string(), apiKey: z.string().optional(),
+      nested: z.object({ password: z.string() }).optional() }),
+    output: z.object({ published: z.boolean() }), timeoutMs: 1000,
     async readiness() {
       await duringReadiness?.();
       return { status: ready ? 'AVAILABLE' as const : 'DEGRADED' as const, why: 'Quota is exhausted.' };
     },
     async run(input, context) {
-      runs += 1; received = input; receivedOrigin = context.origin;
+      runs += 1; received = input; receivedOrigin = context.origin; receivedConfig = context.config;
       if (failWrite) throw new Error('private-provider-secret');
       return { published: true };
     },
   }));
 });
 
-async function proposal(autonomy?: 'THINK' | 'SUGGEST', ownerChat = false) {
+async function proposal(autonomy?: 'THINK' | 'SUGGEST', ownerChat = false, input: unknown = { text: 'Exact report' }) {
   const f = await createFixture();
   await capabilityPermissions.set({ agentId: f.agentId, capabilityId: 'test.publish', permission: 'OWNER_APPROVAL' });
   const login = await app.inject({ method: 'POST', url: '/api/auth/login',
@@ -64,7 +68,7 @@ async function proposal(autonomy?: 'THINK' | 'SUGGEST', ownerChat = false) {
       onStep: async () => {},
     } } : {}),
     generate: async messages => messages.some(m => m.content.includes('no more lookups'))
-      ? 'Waiting for approval.' : '<use-capability>{"id":"test.publish","input":{"text":"Exact report"}}</use-capability>',
+      ? 'Waiting for approval.' : `<use-capability>${JSON.stringify({ id: 'test.publish', input })}</use-capability>`,
   });
   return { ...f, headers, url: `/api/agents/${f.agentId}/mind/capability-approvals` };
 }
@@ -82,6 +86,80 @@ async function decide(f: Awaited<ReturnType<typeof proposal>>, decision = 'APPRO
 }
 
 describe('owner capability approval queue', () => {
+  it('uses the current configuration after readiness', async () => {
+    const f = await proposal();
+    await decide(f);
+    duringReadiness = async () => {
+      await capabilityPermissions.setConfig({ agentId: f.agentId, capabilityId: 'test.publish',
+        permission: 'OWNER_APPROVAL', config: { destination: 'updated' } });
+    };
+    await sweepCapabilityApprovals();
+    expect(receivedConfig).toEqual({ destination: 'updated' });
+  });
+
+  it('deduplicates identical calls without a job or owner message', async () => {
+    const f = await proposal();
+    const options = { agentId: f.agentId, accountId: null, jobId: null,
+      messages: [{ role: 'user' as const, content: 'Publish another report.' }],
+      permissions: new Map([['test.publish', 'OWNER_APPROVAL' as const]]), paused: false, maxSteps: 1,
+      generate: async (messages: { content: string }[]) => messages.some(m => m.content.includes('no more lookups'))
+        ? 'Waiting.' : '<use-capability>{"id":"test.publish","input":{"text":"Repeated report"}}</use-capability>',
+    };
+    await runCapabilityLoop(options);
+    await runCapabilityLoop(options);
+    expect(await query('SELECT count(*) AS count FROM capability_approvals')).toEqual([{ count: 2 }]);
+  });
+
+  it('shows the validated call with credential fields redacted in list and decision responses', async () => {
+    const f = await proposal(undefined, false, {
+      text: 'Exact report', apiKey: 'private-test-key', nested: { password: 'private-test-password' },
+    });
+    for (const response of [await app.inject({ url: f.url, headers: f.headers }), await decide(f)]) {
+      const data = response.json().data;
+      expect(JSON.parse(Array.isArray(data) ? data[0].inputPreview : data.inputPreview)).toEqual({
+        text: 'Exact report', apiKey: '[redacted]', nested: { password: '[redacted]' },
+      });
+      expect(response.body).not.toContain('private-test-');
+    }
+  });
+
+  it('caps an oversized redacted preview and labels its truncation', async () => {
+    const f = await proposal(undefined, false, { text: 'x'.repeat(13000) });
+    const response = await app.inject({ url: f.url, headers: f.headers });
+    expect(response.json().data[0].inputPreview).toHaveLength(12000);
+    expect(response.json().data[0].inputTruncated).toBe(true);
+  });
+
+  it('bounds concurrent pending proposals per agent', async () => {
+    const f = await proposal();
+    const row = (await capabilityApprovals.listForAgent(f.agentId))[0]!;
+    await Promise.all(Array.from({ length: 25 }, (_, i) => capabilityApprovals.propose({
+      ...row, sourceRef: `flood-${i}`, input: { text: `Report ${i}` },
+    })));
+    expect(await query("SELECT count(*) AS count FROM capability_approvals WHERE status='PENDING'")).toEqual([{ count: 20 }]);
+  });
+
+  it('keeps the successful outcome if invocation recording fails', async () => {
+    const f = await proposal();
+    await decide(f);
+    const record = vi.spyOn(capabilityInvocations, 'recordInvocation').mockRejectedValueOnce(new Error('private-record-error'));
+    try { await sweepCapabilityApprovals(); } finally { record.mockRestore(); }
+    expect(runs).toBe(1);
+    expect((await pending(f)).status).toBe('DONE');
+    await sweepCapabilityApprovals();
+    expect(runs).toBe(1);
+  });
+
+  it('retains approval history when its source account is deleted', async () => {
+    const f = await proposal();
+    const account = await accounts.createAccount({ ownerId: f.ownerId, channel: 'mock', handle: 'approval-history' });
+    await query('UPDATE capability_approvals SET account_id=$1', [account.id]);
+    await query('DELETE FROM accounts WHERE id=$1', [account.id]);
+    const rows = await capabilityApprovals.listForAgent(f.agentId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.accountId).toBeNull();
+  });
+
   it('keeps an unapproved write refused and exposes a pending owner decision', async () => {
     const f = await proposal();
     expect(runs).toBe(0);
@@ -93,13 +171,13 @@ describe('owner capability approval queue', () => {
   it('executes exact input once after concurrent approvals and concurrent worker ticks', async () => {
     const f = await proposal();
     const responses = await Promise.all([decide(f), decide(f)]);
-    expect(responses.map(r => r.statusCode)).toEqual([200, 200]);
+    expect(responses.map(r => r.statusCode).sort()).toEqual([200, 409]);
     expect(runs).toBe(0);
     await Promise.all([sweepCapabilityApprovals(), sweepCapabilityApprovals()]);
     expect(runs).toBe(1);
     expect(received).toEqual({ text: 'Exact report' });
     expect((await pending(f)).status).toBe('DONE');
-    await decide(f);
+    expect((await decide(f)).statusCode).toBe(409);
     await sweepCapabilityApprovals();
     expect(runs).toBe(1);
     const audits = await query("SELECT * FROM audit_events WHERE action='capability.approval.approved'");
@@ -210,7 +288,7 @@ describe('owner capability approval queue', () => {
     expect(runs).toBe(1);
     const response = await app.inject({ url: f.url, headers: f.headers });
     expect(response.body).not.toContain('private-provider-secret');
-    expect(response.body).not.toContain('Exact report');
+    expect(JSON.parse(response.json().data[0].inputPreview)).toEqual({ text: 'Exact report' });
     expect(response.body).not.toContain('inputSha256');
     expect(response.json().data[0].status).toBe('FAILED');
   });

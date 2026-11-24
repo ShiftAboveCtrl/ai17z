@@ -1,6 +1,5 @@
-import { randomUUID } from 'node:crypto';
 import { capabilityApprovals, capabilityInvocations } from '@xbam/database';
-import { createLogger, type Logger } from '@xbam/shared';
+import { canonicalJson, createLogger, sha256Hex, type Logger } from '@xbam/shared';
 import type { AutonomyLevel, ChatMessage } from '@xbam/shared/contracts';
 import { permissionWhenUnset, type CapabilityPermission } from '@xbam/shared/contracts';
 import {
@@ -171,12 +170,21 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
   const maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS;
   const budgetMs = options.budgetMs ?? DEFAULT_BUDGET_MS;
   const deadline = Date.now() + budgetMs;
-  const proposalRef = options.goalPlan?.sourceRef ?? options.origin?.messageId ?? options.jobId ?? randomUUID();
+  const proposalRef = options.goalPlan?.sourceRef ?? options.origin?.messageId ?? options.jobId ??
+    sha256Hex(canonicalJson(options.messages));
   const propose = async (capabilityId: string, input: unknown, step: number, why: string) => {
-    await capabilityApprovals.propose({ agentId: options.agentId, capabilityId, input,
-      source: options.origin ? 'OWNER_CHAT' : options.goalPlan ? 'GOAL_PLAN' : 'REPLY',
-      sourceRef: `${proposalRef}:${step}`, why, jobId: options.jobId, accountId: options.accountId,
-      audience: options.audience ?? 'PUBLIC', origin: options.origin ?? null });
+    try {
+      const saved = await capabilityApprovals.propose({ agentId: options.agentId, capabilityId, input,
+        source: options.origin ? 'OWNER_CHAT' : options.goalPlan ? 'GOAL_PLAN' : 'REPLY',
+        sourceRef: `${proposalRef}:${step}`, why, jobId: options.jobId, accountId: options.accountId,
+        audience: options.audience ?? 'PUBLIC', origin: options.origin ?? null });
+      return saved !== false;
+    } catch (error) {
+      logger.error('capability proposal could not be queued', {
+        capabilityId, errorClass: error instanceof Error ? error.name : typeof error,
+      });
+      return false;
+    }
   };
 
   /**
@@ -285,15 +293,17 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
     const wasOffered = offered.some(capability => capability.id === turn.call.id);
     if (wasOffered && current && current.autonomy !== 'ACT') {
       const parsed = getCapability(turn.call.id)?.input.safeParse(turn.call.input);
-      const detail = 'Proposed for the owner; this agent is below ACT.';
+      let detail = 'Proposed for the owner; this agent is below ACT.';
+      let queued = false;
       if (parsed?.success && current.permissions.get(turn.call.id) !== 'DISABLED') {
-        await propose(turn.call.id, parsed.data, step, detail);
+        queued = await propose(turn.call.id, parsed.data, step, detail);
       }
-      const stoppedStep = { capabilityId: turn.call.id, outcome: 'PROPOSED',
+      if (!queued) detail = 'The call could not be queued for owner approval.';
+      const stoppedStep = { capabilityId: turn.call.id, outcome: queued ? 'PROPOSED' : 'REFUSED',
         detail, durationMs: 0, output: null, input: parsed?.success ? parsed.data : null };
       steps.push(stoppedStep);
       await options.goalPlan!.onStep(stoppedStep, step);
-      return { answer: '', steps, exhausted: false, shortlist, halted: 'PROPOSED', reason: detail };
+      return { answer: '', steps, exhausted: false, shortlist, halted: queued ? 'PROPOSED' : 'STOPPED', reason: detail };
     }
 
     // A model can name something absent from its menu. Record the refusal
@@ -326,7 +336,9 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
     });
 
     if (result.needsApproval && result.input !== null) {
-      await propose(result.capabilityId, result.input, step, 'This capability requires owner approval for this call.');
+      if (!(await propose(result.capabilityId, result.input, step, 'This capability requires owner approval for this call.'))) {
+        result.detail = 'The call could not be queued for owner approval.';
+      }
     }
 
     steps.push({

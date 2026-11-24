@@ -79,6 +79,25 @@ const base = {
 };
 
 describe('the capability loop', () => {
+  it.each([false, true])('survives a failed proposal write (goal plan: %s)', async goal => {
+    const { capabilityApprovals } = await import('@xbam/database');
+    const save = vi.spyOn(capabilityApprovals, 'propose').mockRejectedValueOnce(new Error('private-db-error'));
+    const generate = vi.fn().mockResolvedValueOnce(call('test.clock')).mockResolvedValue('Could not queue the call.');
+    try {
+      const result = await runCapabilityLoop({ ...base, generate, maxSteps: 1,
+        permissions: new Map([['test.clock', 'OWNER_APPROVAL']]),
+        ...(goal ? { goalPlan: {
+          checkpoint: async () => ({ permissions: new Map([['test.clock', 'OWNER_APPROVAL' as const]]),
+            configs: new Map(), paused: false, autonomy: 'SUGGEST' as const, enabled: true }),
+          onStep: async () => {},
+        } } : {}),
+      });
+      expect(result.steps[0]?.detail).toContain('could not be queued');
+      if (!goal) expect(generate.mock.calls[1]![0]).toContainEqual(expect.objectContaining({
+        role: 'system', content: expect.stringContaining('could not be queued'),
+      }));
+    } finally { save.mockRestore(); }
+  });
   it.each([
     { input: { ignored: 'not retained' }, parsed: {} },
     { input: 'invalid input', parsed: null },
