@@ -6,9 +6,10 @@ import {
   jobs as jobsRepo,
   memories as memoriesRepo,
   observability,
+  providers,
 } from '@xbam/database';
 import { NotFoundError, PipelineError, createLogger, newId } from '@xbam/shared';
-import type { EventType, JobRecord, TraceEvent, TraceEventType } from '@xbam/shared/contracts';
+import type { EventType, JobRecord, TraceEvent, TraceEventType, RegressionCandidate } from '@xbam/shared/contracts';
 import { ingestNormalizedEvent } from './ingest';
 
 const log = createLogger('rehearse');
@@ -124,6 +125,9 @@ export async function rehearse(input: {
   accountId?: string | null;
   subject: RehearsalSubject;
   requestedBy?: string | null;
+  candidate?: RegressionCandidate;
+  /** Replay retained text locally while keeping its original addressing semantics. */
+  replayOnMock?: boolean;
 }): Promise<RehearsalRun> {
   const agent = await agentsRepo.getAgent(input.agentId);
   if (!agent) throw new NotFoundError('Agent');
@@ -149,8 +153,9 @@ export async function rehearse(input: {
     accountId,
     onlyAgentId: input.agentId,
     dryRun: true,
+    candidate: input.candidate,
     event: {
-      channel: subject.channel,
+      channel: input.replayOnMock ? 'mock' : subject.channel,
       type: eventTypeFor(subject.as),
       remoteEventId,
       remoteMessageId: subject.remoteId ?? remoteEventId,
@@ -165,6 +170,8 @@ export async function rehearse(input: {
       raw: {
         origin: 'rehearsal',
         rehearsal: true,
+        rehearsalSubject: subject,
+        regressionModelRoles: (await providers.listModelConfigs(input.agentId)).map(({ role, model, providerCredentialId, parameters }) => ({ role, model, providerCredentialId, parameters })),
         // Typed into the lab, so written to the agent; a real post says so by naming it.
         ...(subject.channel === 'mock' && eventTypeFor(subject.as) === 'MENTION' ? { addressedToAgent: true } : {}),
         requestedBy: input.requestedBy ?? null,

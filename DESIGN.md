@@ -1,5 +1,15 @@
 # Radar evidence extension
 
+## Agent regression lab
+
+Extend the existing Lab panels with saved cases and runs. Keep the established
+ink and bone tokens, Archivo and Kanit typography and visible focus treatment.
+Use labelled single-column controls at least 48px high. Put decision, validator,
+version ids and word changes beside each case; wrap identifiers and stack at
+390px. Text changes say that models rewrite differently each time. Reserve red
+for regressions, with a visible severity word. Keep save, pending, empty and
+error states explicit. No new motion or decorative assets.
+
 ## Capability approval queue
 
 Keep capability decisions beside proposals on the existing deliberation screen.

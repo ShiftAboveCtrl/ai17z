@@ -33,6 +33,8 @@ export interface PolicyPlacement {
 }
 
 export const POLICY_REACHABILITY: Record<string, PolicyPlacement> = {
+  'regression.autoRunOnChange': { where: 'ADVANCED_ONLY' },
+  'regression.maxRunsPerDay': { where: 'ADVANCED_ONLY' },
   'tools.evidenceCards': { where: 'EASY_AND_ADVANCED' },
   'tools.evidenceCardLink': { where: 'ADVANCED_ONLY' },
   'tools.evidenceCardImage': { where: 'ADVANCED_ONLY' },

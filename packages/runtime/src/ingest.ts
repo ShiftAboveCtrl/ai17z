@@ -7,7 +7,7 @@ import type {
 } from '@xbam/shared/contracts';
 import { SCREENED_EVENT_TYPES, authorContext, screenInbound } from './spam';
 import { z } from 'zod';
-import { NormalizedEvent, PolicyConfig } from '@xbam/shared/contracts';
+import { NormalizedEvent, PolicyConfig, RegressionCandidate, ResolvedContext } from '@xbam/shared/contracts';
 import { PipelineError, actionIdempotencyKey, createLogger, envInt, sanitizeText } from '@xbam/shared';
 import {
   accounts as accountsRepo,
@@ -59,6 +59,7 @@ export const IngestOptionsSchema = z
     onlyAgentId: z.string().uuid().optional(),
     /** Overrides the policy default for this event. */
     dryRun: z.boolean().optional(),
+    candidate: RegressionCandidate.optional(),
     /** Record the event and stop. See `recordOnly` on IngestOptions. */
     recordOnly: z.boolean().optional(),
     /** The canonical tracked-account watch that produced this event. */
@@ -75,6 +76,7 @@ export interface IngestOptions {
   onlyAgentId?: string;
   /** Overrides the policy default for this event. */
   dryRun?: boolean;
+  candidate?: RegressionCandidate;
   /**
    * Record the event and consider no agent at all.
    *
@@ -310,6 +312,9 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
     );
   }
   const options = parsed.data as IngestOptions;
+  if (options.candidate && options.dryRun !== true) {
+    throw PipelineError.permanent('candidate_not_dry', 'A candidate requires an explicit rehearsal.');
+  }
   const { accountId } = options;
 
   // Cleaned once, here, because this is the one door every channel comes
@@ -816,6 +821,11 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
         runAt: await catchUpDelayMs(tx, agent.id, event.type, age),
       });
       outcome.jobs.push({ job, created, agentId: agent.id });
+      if (created && options.candidate) {
+        await jobsRepo.updateJob(job.id, {
+          resolvedContext: ResolvedContext.parse({ incomingText: event.text, meta: { candidate: options.candidate } }),
+        }, tx);
+      }
 
       if (created) {
         // The trace row has a foreign key to jobs, and trace writes go through

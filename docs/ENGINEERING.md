@@ -1,5 +1,10 @@
 # Engineering notes
 
+Saved cases, configuration previews and deterministic run comparisons extend
+the Response Lab. See [REGRESSION_LAB.md](architecture/REGRESSION_LAB.md) for its
+persistence and safety contract. Regression subjects stay local and never enter
+agent packages.
+
 The rules this codebase runs on, and why each one is there.
 
 Every paragraph below was written after something went wrong. They are

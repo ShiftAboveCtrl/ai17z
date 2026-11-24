@@ -1,3 +1,4 @@
+import { RegressionControls } from '@app/components/RegressionLab';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ApiError, del, post, put } from '@app/lib/api';
@@ -393,6 +394,7 @@ export function IntelligenceSection({
           </div>
         </div>
       </Modal>
+      <RegressionControls agentId={agentId} revision={models} />
     </Section>
   );
 }

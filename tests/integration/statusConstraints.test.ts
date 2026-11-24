@@ -44,6 +44,15 @@ import { uniqueSuffix } from '../support/db';
 
 installHarness();
 
+it('accepts regression triggers and refuses an unknown trigger', async () => {
+  const f = await createFixture();
+  for (const trigger of ['MANUAL', 'PERSONA', 'POLICY', 'MODEL', 'PREVIEW']) {
+    const rows = await query<{ id: string }>('INSERT INTO agent_regression_runs(agent_id,trigger,finished_at) VALUES($1,$2,now()) RETURNING id', [f.agentId, trigger]);
+    expect(rows).toHaveLength(1);
+  }
+  await expect(query("INSERT INTO agent_regression_runs(agent_id,trigger) VALUES($1,'AUTOMATIC')", [f.agentId])).rejects.toThrow(/check constraint/);
+});
+
 it('accepts every capability approval vocabulary and enforces its unique execution key', async () => {
   const f = await createFixture();
   const insert = async (status: string, source: string, audience = 'PUBLIC') => query<{ id: string }>(
@@ -681,4 +690,15 @@ describe('every artifact kind the code can write is one the database accepts', (
       ops.createArtifact({ kind: 'NOT_A_KIND' as never, agentId: fixture.agentId, mimeType: 'image/png', relPath: 'kinds/x.png', bytes: 1 }),
     ).rejects.toThrow();
   });
+});
+
+
+it('accepts every regression change trigger and refuses an unknown one', async () => {
+  const f = await createFixture();
+  for (const trigger of ['PERSONA', 'POLICY', 'MODEL']) {
+    await query('DELETE FROM agent_regression_changes WHERE agent_id=$1', [f.agentId]);
+    expect(await query('INSERT INTO agent_regression_changes(agent_id,trigger) VALUES($1,$2) RETURNING agent_id', [f.agentId, trigger])).toHaveLength(1);
+  }
+  await query('DELETE FROM agent_regression_changes WHERE agent_id=$1', [f.agentId]);
+  await expect(query("INSERT INTO agent_regression_changes(agent_id,trigger) VALUES($1,'MANUAL')", [f.agentId])).rejects.toThrow(/check constraint/);
 });

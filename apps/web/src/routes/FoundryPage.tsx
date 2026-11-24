@@ -1,3 +1,4 @@
+import { RegressionControls } from '@app/components/RegressionLab';
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Check, ChevronDown, CircleDot, FlaskConical, Pencil, RotateCcw, Search, X } from 'lucide-react';
@@ -674,6 +675,7 @@ function RunDetail({ agentId, runId }: { agentId: string; runId: string }) {
       )}
 
       {(applied || items.some((i) => i.status === 'APPLIED')) && <TestPanel agentId={agentId} foundryRunId={run.id} />}
+      {applied && <RegressionControls agentId={agentId} revision={applied} />}
 
       {sections.length > 0 && (
         <>

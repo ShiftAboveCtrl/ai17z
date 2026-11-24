@@ -171,6 +171,7 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
         model: input.model,
         parameters: input.parameters,
       });
+
       return { items: await providersRepo.listModelConfigs(agent.id) };
     }),
   );

@@ -10,6 +10,7 @@ import { ApiError, get, put } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
 import { ChoiceGroup, ChoiceOption, Field, SavedTick, Spinner, Toggle } from '@app/components/ui';
 import { Section, useSubHeading } from './Section';
+import { RegressionControls } from '@app/components/RegressionLab';
 
 /** What the spending endpoint answers with. One report per limit, plus warnings. */
 interface LimitReport {
@@ -835,6 +836,11 @@ export function PoliciesSection({
         </span>
         {error && <p className="w-full text-sm text-signal-fail">{error}</p>}
       </div>
+      <RegressionControls agentId={agentId} candidate={{ policy: draft }} revision={version} />
+      <Toggle label="Run saved cases after configuration changes" description="Off by default. Uses the agent’s models, at most one automatic run per day by default." checked={draft.regression.autoRunOnChange} onChange={value => patch(next => { next.regression.autoRunOnChange = value; })} />
+      <Field label="Automatic runs per day" htmlFor="regression-daily-cap" hint="A UTC daily cap, including manual runs. At most three automatic runs may be allowed.">
+        <input id="regression-daily-cap" name="regressionDailyCap" type="number" min={1} max={3} className="field min-h-12" value={draft.regression.maxRunsPerDay} onChange={event => patch(next => { next.regression.maxRunsPerDay = Number(event.target.value); })} />
+      </Field>
     </Section>
   );
 }

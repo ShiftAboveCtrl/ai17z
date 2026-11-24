@@ -163,6 +163,9 @@ export async function stepResolveContext(bundle: JobBundle): Promise<void> {
     throw error;
   }
   if (readsX) await noteXRead(bundle.job.accountId!, klass);
+  if (bundle.job.resolvedContext?.meta.candidate !== undefined) {
+    resolved.meta.candidate = bundle.job.resolvedContext.meta.candidate;
+  }
 
   // Now that the thread is known, put this exchange with the rest of it.
   await bindToThread(bundle, resolved);

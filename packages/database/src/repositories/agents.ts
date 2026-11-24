@@ -4,6 +4,7 @@ import { DEFAULT_POLICY, NotFoundError, logger, sameContent, slugify } from '@xb
 import { query, queryOne, withTransaction, type Tx } from '../pool';
 
 import { mapRow, mapRows } from '../mapper';
+import { noteChange } from './regression';
 
 const AGENT_COLUMNS = `
   id, owner_id, slug, name, description, avatar_url, avatar_mode, state, last_error,
@@ -307,7 +308,15 @@ export async function savePersonaVersion(
     const active = activeRow ? (mapRow<PersonaVersion>(activeRow) as PersonaVersion) : null;
 
     // Nothing to record. Pressing save on an unchanged screen is not an edit.
-    if (active && !personaDiffers(draft, active)) return active;
+    if (active && !personaDiffers(draft, active)) {
+      // Explicitly saving the final autosave is the point at which typing is ready to check.
+      if (!options.autosave && active.changeNote === AUTOSAVE_NOTE) {
+        await tx.query('UPDATE persona_versions SET change_note=$2 WHERE id=$1', [active.id, draft.changeNote]);
+        active.changeNote = draft.changeNote;
+        await noteChange(agentId, 'PERSONA', tx);
+      }
+      return active;
+    }
 
     if (options.autosave && active && (active.changeNote ?? '') === AUTOSAVE_NOTE) {
       const age = Date.now() - Date.parse(active.createdAt as unknown as string);
@@ -351,6 +360,7 @@ export async function savePersonaVersion(
       agentId,
       version.id,
     ]);
+    if (!options.autosave) await noteChange(agentId, 'PERSONA', tx);
     return version;
   });
 }
@@ -440,6 +450,7 @@ export async function savePolicyVersion(
     if (!policy) throw new NotFoundError('Policy');
     const version = await insertPolicyVersion(tx, policy.id, config, changeNote, createdBy);
     await tx.query('UPDATE agents SET policy_version_id = $2, updated_at = now() WHERE id = $1', [agentId, version.id]);
+    await noteChange(agentId, 'POLICY', tx);
     return { ...version, policyId: policy.id, changeNote, createdAt: new Date().toISOString() };
   });
 }

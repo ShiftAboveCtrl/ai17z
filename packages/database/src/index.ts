@@ -153,3 +153,4 @@ export type { AgentChangeRow, AgentChangeRisk, AgentChangeStatus, AgentChangeSub
 
 export * as postMediaDecisions from './repositories/postMediaDecisions';
 export * as agentMcp from './repositories/agentMcp';
+export * as regression from './repositories/regression';

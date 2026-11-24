@@ -549,6 +549,7 @@ export type StudioPolicy = z.infer<typeof StudioPolicy>;
 
 /** The complete, versioned policy document attached to an agent. */
 export const PolicyConfig = z.object({
+  regression: z.object({ autoRunOnChange: z.boolean().default(false), maxRunsPerDay: z.number().int().min(1).max(3).default(1) }).prefault({}),
   automation: z
     .object({
       mode: AutomationMode.default('REVIEW_BEFORE_ACTION'),

@@ -163,7 +163,10 @@ async function readLearned(agentId: string): Promise<PortableLearned> {
     remote_handle: string | null;
   }>(
     `SELECT scope, memory_type, content, summary, importance, remote_handle
-       FROM memories WHERE agent_id = $1 ORDER BY created_at LIMIT 5000`,
+       FROM memories m WHERE agent_id = $1
+        AND NOT EXISTS (SELECT 1 FROM jobs j JOIN events e ON e.id=j.event_id
+          WHERE j.id=m.source_job_id AND e.payload->>'origin'='rehearsal')
+       ORDER BY created_at LIMIT 5000`,
     [agentId],
   );
 
