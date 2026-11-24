@@ -1,15 +1,59 @@
 import { z } from 'zod';
 
 export const GOAL_PLAN_STATES = ['RUNNING', 'COMPLETED', 'PROPOSED', 'STOPPED', 'EXHAUSTED'] as const;
+/** Conclusions and capability references only, never model deliberation. */
+export interface GoalPlanStep { capabilityId: string; outcome: string; durationMs: number; input: unknown }
 export interface GoalPlan {
   state: (typeof GOAL_PLAN_STATES)[number];
   startedAt: string;
   maxSteps: number;
   budgetMs: number;
-  /** Conclusions and capability references only, never model deliberation. */
-  steps: { capabilityId: string; outcome: string; durationMs: number; input: unknown }[];
+  steps: GoalPlanStep[];
   summary: string;
 }
+
+/** One row per wake attempt. INTERRUPTED is recorded by a later wake, never by the attempt. */
+export const GOAL_ATTEMPT_STATES = [...GOAL_PLAN_STATES, 'INTERRUPTED'] as const;
+export type GoalAttemptState = (typeof GOAL_ATTEMPT_STATES)[number];
+
+/**
+ * How an attempt can end a goal. The agent proposes and the owner accepts, so
+ * deliberation never writes a goal's status, progress or resolution.
+ */
+export const GOAL_PROPOSED_ENDS = ['DONE', 'ABANDON'] as const;
+export type GoalProposedEnd = (typeof GOAL_PROPOSED_ENDS)[number];
+export const GOAL_END_REASON_MIN = 6;
+export const GOAL_END_REASON_MAX = 300;
+
+export const GOAL_RESUME_MAX_BYTES = 2048;
+export const GOAL_RESUME_MAX_FACTS = 8;
+export const GOAL_FACT_MAX_CHARS = 240;
+export const GOAL_HINT_MAX_CHARS = 300;
+/** A fact older than this is dropped, because a stale lookup reads as current. */
+export const GOAL_FACT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** What a capability returned, reduced to one line by code. Never model text. */
+export const GoalFact = z.object({
+  capabilityId: z.string().min(1).max(120),
+  atAttempt: z.number().int().min(1),
+  /** When it was looked up, so it can expire. */
+  at: z.iso.datetime(),
+  summary: z.string().min(1).max(GOAL_FACT_MAX_CHARS),
+}).strict();
+export type GoalFact = z.infer<typeof GoalFact>;
+
+/** The checkpoint on a goal. Strict and capped, so it cannot become a transcript. */
+export const GoalResume = z.object({
+  attemptNo: z.number().int().min(1),
+  facts: z.array(GoalFact).max(GOAL_RESUME_MAX_FACTS),
+  /** The previous attempt's own concluding sentence. */
+  nextHint: z.string().max(GOAL_HINT_MAX_CHARS),
+  lastOutcome: z.enum(GOAL_ATTEMPT_STATES),
+}).strict().refine(
+  resume => new TextEncoder().encode(JSON.stringify(resume)).length <= GOAL_RESUME_MAX_BYTES,
+  { message: 'A goal checkpoint is capped at 2 KB.' },
+);
+export type GoalResume = z.infer<typeof GoalResume>;
 
 /**
  * Persistent autonomous deliberation: the vocabulary.

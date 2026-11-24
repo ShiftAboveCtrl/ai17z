@@ -8,6 +8,8 @@ import {
   TELEGRAM_OUTBOX_STATES,
   TRACE_EVENT_TYPES,
   GOAL_PLAN_STATES,
+  GOAL_ATTEMPT_STATES,
+  GOAL_PROPOSED_ENDS,
   CAPABILITY_APPROVAL_STATUSES,
   CAPABILITY_APPROVAL_SOURCES,
   CHECK_BOARD_CHAINS,
@@ -72,6 +74,29 @@ it('accepts every goal plan state and rejects unknown or missing states', async 
     await expect(query('UPDATE agent_goals SET plan=$2::jsonb WHERE id=$1', [goal.id, JSON.stringify(plan)]))
       .rejects.toThrow(/check constraint/);
   }
+});
+
+it('accepts every goal attempt state and proposed ending, and rejects unknown ones', async () => {
+  const f = await createFixture();
+  const { deliberation: mind } = await import('@xbam/database');
+  const goal = await mind.addGoal({ agentId: f.agentId, summary: 'Read the current time.' });
+  const insert = (state: string, no: number) => query(
+    'INSERT INTO agent_goal_attempts(goal_id, agent_id, attempt_no, state) VALUES($1,$2,$3,$4)', [goal.id, f.agentId, no, state]);
+  for (const [index, state] of GOAL_ATTEMPT_STATES.entries()) await insert(state, index + 1);
+  await expect(insert('RETRY', 99)).rejects.toThrow(/check constraint/);
+  for (const end of GOAL_PROPOSED_ENDS) await query('UPDATE agent_goals SET proposed_end=$2 WHERE id=$1', [goal.id, end]);
+  await query('UPDATE agent_goals SET proposed_end=NULL WHERE id=$1', [goal.id]);
+  await expect(query("UPDATE agent_goals SET proposed_end='FINISHED' WHERE id=$1", [goal.id])).rejects.toThrow(/check constraint/);
+});
+
+it('caps a goal checkpoint at 2 KB and keeps the budget columns in range', async () => {
+  const f = await createFixture();
+  const { deliberation: mind } = await import('@xbam/database');
+  const goal = await mind.addGoal({ agentId: f.agentId, summary: 'Read the current time.' });
+  await query('UPDATE agent_goals SET resume=$2::jsonb WHERE id=$1', [goal.id, JSON.stringify({ attemptNo: 1, facts: [], nextHint: '', lastOutcome: 'COMPLETED' })]);
+  await expect(query('UPDATE agent_goals SET resume=$2::jsonb WHERE id=$1', [goal.id, JSON.stringify({ nextHint: 'x'.repeat(2100) })]))
+    .rejects.toThrow(/check constraint/);
+  await expect(query('UPDATE agent_goals SET resume=$2::jsonb WHERE id=$1', [goal.id, '[]'])).rejects.toThrow(/check constraint/);
 });
 
 it('persists evidence-card reservations with job foreign keys and nullable owner confirmation', async () => {

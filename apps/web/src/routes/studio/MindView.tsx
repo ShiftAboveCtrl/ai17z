@@ -4,6 +4,7 @@ import { del, post, put } from '@app/lib/api';
 import { EmptyState, RetryablePanel, Spinner, Working } from '@app/components/ui';
 import { Card, Gaps, Panel, Reasons } from './shared';
 import { CapabilityApprovals } from './CapabilityApprovals';
+import { GoalAttempts, type GoalWork } from './GoalAttempts';
 
 /**
  * What the agent has been thinking about.
@@ -52,7 +53,7 @@ interface MindItem {
   origin: string;
 }
 
-interface Goal {
+interface Goal extends GoalWork {
   id: string;
   summary: string;
   reason: string;
@@ -533,6 +534,7 @@ export function MindView({ agentId }: { agentId: string }) {
               }
             >
               {entry.status === 'ACTIVE' && entry.progress > 0 && <Bar value={entry.progress} />}
+              <GoalAttempts agentId={agentId} goal={entry} onChanged={view.reload} />
               {entry.evidence.length > 0 && (
                 <Gaps
                   items={entry.evidence.map((item) => `${item.kind}: ${item.note || item.ref}`)}

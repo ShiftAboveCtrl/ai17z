@@ -3,14 +3,18 @@ import type {
   AttentionState,
   AutonomyLevel,
   EvidenceRef,
+  GoalAttemptState,
   GoalOrigin,
   GoalPlan,
+  GoalPlanStep,
+  GoalProposedEnd,
+  GoalResume,
   GoalStatus,
   ReflectionKind,
   SalienceFactor,
 } from '@xbam/shared/contracts';
 import { mapRow, mapRows } from '../mapper';
-import { query, queryOne } from '../pool';
+import { query, queryOne, withTransaction } from '../pool';
 
 /**
  * What an agent is currently thinking about, and what it means to do about it.
@@ -239,25 +243,165 @@ export interface GoalRow {
   createdAt: string;
   updatedAt: string;
   resolvedAt: string | null;
+  /** The latest attempt. Earlier ones are in agent_goal_attempts. */
   plan: GoalPlan | null;
+  dailyStepBudget: number;
+  dailyTimeBudgetMs: number;
+  /** What earlier attempts found, validated on the way in. */
+  resume: GoalResume | null;
+  nextAttemptAt: string | null;
+  /** The agent's proposal. The owner decides; status is never written from it. */
+  proposedEnd: GoalProposedEnd | null;
+  proposedEndReason: string;
+  blockedReason: string | null;
+  quietAttempts: number;
+  lastAttemptAt: string | null;
 }
 
 const GOAL_COLUMNS = `id, agent_id, summary, reason, origin, pinned, priority, status, progress,
-  evidence, resolution, next_review_at, created_at, updated_at, resolved_at, plan`;
+  evidence, resolution, next_review_at, created_at, updated_at, resolved_at, plan,
+  daily_step_budget, daily_time_budget_ms, resume, next_attempt_at, proposed_end,
+  proposed_end_reason, blocked_reason, quiet_attempts,
+  (SELECT max(finished_at) FROM agent_goal_attempts a WHERE a.goal_id = agent_goals.id) AS last_attempt_at`;
 
-/** A committed claim prevents another wake from replaying the same goal. */
-export async function claimGoalPlan(id: string, plan: GoalPlan): Promise<boolean> {
-  const rows = await query(
-    `UPDATE agent_goals SET plan = $2::jsonb, updated_at = now()
-      WHERE id = $1 AND status = 'ACTIVE' AND plan IS NULL RETURNING id`,
-    [id, JSON.stringify(plan)],
+export interface GoalAttemptRow {
+  id: string;
+  goalId: string;
+  agentId: string;
+  attemptNo: number;
+  startedAt: string;
+  finishedAt: string | null;
+  state: GoalAttemptState;
+  steps: GoalPlanStep[];
+  summary: string;
+  newFacts: number;
+}
+
+const ATTEMPT_COLUMNS = 'id, goal_id, agent_id, attempt_no, started_at, finished_at, state, steps, summary, new_facts';
+
+/**
+ * Starts an attempt in one statement: the goal's plan is replaced only if no
+ * attempt is running, and the attempt row exists only if that replacement
+ * happened. Two wakes cannot both win, and a goal the owner has since blocked
+ * or ended, or that is not due, cannot be claimed from a stale read.
+ */
+export async function claimGoalAttempt(
+  goalId: string, plan: GoalPlan,
+): Promise<{ attemptId: string; attemptNo: number } | null> {
+  const row = await queryOne<{ id: string; attempt_no: number }>(
+    `WITH claimed AS (
+       UPDATE agent_goals SET plan = $2::jsonb, updated_at = now()
+        WHERE id = $1 AND status = 'ACTIVE' AND blocked_reason IS NULL AND proposed_end IS NULL
+          AND (next_attempt_at IS NULL OR next_attempt_at <= now())
+          AND (plan IS NULL OR plan->>'state' <> 'RUNNING')
+        RETURNING id, agent_id
+     )
+     INSERT INTO agent_goal_attempts (goal_id, agent_id, attempt_no, state)
+     SELECT c.id, c.agent_id,
+            coalesce((SELECT max(attempt_no) FROM agent_goal_attempts WHERE goal_id = c.id), 0) + 1, 'RUNNING'
+       FROM claimed c
+     RETURNING id, attempt_no`,
+    [goalId, JSON.stringify(plan)],
   );
-  return rows.length === 1;
+  return row ? { attemptId: row.id, attemptNo: row.attempt_no } : null;
 }
 
 export async function saveGoalPlan(id: string, plan: GoalPlan): Promise<void> {
   await query('UPDATE agent_goals SET plan = $2::jsonb, updated_at = now() WHERE id = $1',
     [id, JSON.stringify(plan)]);
+}
+
+/** Steps are saved one at a time so a crash leaves evidence of what ran. */
+export async function saveAttemptSteps(attemptId: string, steps: GoalPlanStep[]): Promise<void> {
+  await query('UPDATE agent_goal_attempts SET steps = $2::jsonb WHERE id = $1', [attemptId, JSON.stringify(steps)]);
+}
+
+/** The last 24 hours of a goal's spending, rolling so budgets never reset in a stampede. */
+export async function goalBudgetUse(goalId: string): Promise<{
+  stepsUsed: number; msUsed: number; windowStartedAt: string | null;
+}> {
+  const row = await queryOne<{ steps_used: number; ms_used: number; window_started_at: Date | null }>(
+    `SELECT coalesce(sum(jsonb_array_length(steps)), 0)::int AS steps_used,
+            coalesce(round(sum(greatest(0, extract(epoch FROM (coalesce(finished_at, now()) - started_at)) * 1000))), 0)::bigint AS ms_used,
+            min(started_at) AS window_started_at
+       FROM agent_goal_attempts
+      WHERE goal_id = $1 AND started_at > now() - interval '24 hours'`,
+    [goalId],
+  );
+  return { stepsUsed: Number(row?.steps_used ?? 0), msUsed: Number(row?.ms_used ?? 0),
+    windowStartedAt: row?.window_started_at ? row.window_started_at.toISOString() : null };
+}
+
+export async function deferGoal(id: string, nextAttemptAt: string): Promise<void> {
+  await query('UPDATE agent_goals SET next_attempt_at = $2, updated_at = now() WHERE id = $1', [id, nextAttemptAt]);
+}
+
+export interface GoalAttemptResult {
+  attemptId: string;
+  state: GoalAttemptState;
+  plan: GoalPlan;
+  summary: string;
+  newFacts: number;
+  resume: GoalResume;
+  quietAttempts: number;
+  nextAttemptAt: string;
+  proposedEnd: { end: GoalProposedEnd; reason: string } | null;
+  blockedReason: string | null;
+}
+
+/**
+ * Writes what an attempt did. It records a proposal and a block and nothing
+ * else about how the goal stands: status, progress and resolution are the
+ * owner's, and only updateGoal (an owner route) writes them.
+ */
+export async function finishGoalAttempt(goalId: string, result: GoalAttemptResult): Promise<void> {
+  await withTransaction(async tx => {
+    await tx.many(
+      `UPDATE agent_goal_attempts SET state = $2, finished_at = now(), steps = $3::jsonb, summary = $4, new_facts = $5
+        WHERE id = $1`,
+      [result.attemptId, result.state, JSON.stringify(result.plan.steps), result.summary, result.newFacts],
+    );
+    await tx.many(
+      `UPDATE agent_goals SET plan = $2::jsonb, resume = $3::jsonb, quiet_attempts = $4, next_attempt_at = $5,
+              proposed_end = coalesce($6, proposed_end),
+              proposed_end_reason = CASE WHEN $6::text IS NULL THEN proposed_end_reason ELSE $7 END,
+              blocked_reason = coalesce($8, blocked_reason), updated_at = now()
+        WHERE id = $1`,
+      [goalId, JSON.stringify(result.plan), JSON.stringify(result.resume), result.quietAttempts, result.nextAttemptAt,
+        result.proposedEnd?.end ?? null, result.proposedEnd?.reason ?? '', result.blockedReason],
+    );
+  });
+}
+
+/**
+ * Ends a RUNNING attempt whose budget has passed. Only the wake that changes
+ * the plan out of RUNNING records it, so it is interrupted once and a stopped
+ * process never replays an action whose remote outcome is unknown.
+ */
+export async function interruptGoalAttempt(
+  goalId: string, plan: GoalPlan, finishedAt: string, nextAttemptAt: string,
+): Promise<boolean> {
+  return withTransaction(async tx => {
+    const changed = await tx.many(
+      `UPDATE agent_goals SET plan = $2::jsonb, next_attempt_at = $3, quiet_attempts = quiet_attempts + 1, updated_at = now()
+        WHERE id = $1 AND plan->>'state' = 'RUNNING' RETURNING id`,
+      [goalId, JSON.stringify(plan), nextAttemptAt],
+    );
+    if (changed.length === 0) return false;
+    await tx.many(
+      `UPDATE agent_goal_attempts SET state = 'INTERRUPTED', finished_at = $2, steps = $3::jsonb, summary = $4
+        WHERE goal_id = $1 AND state = 'RUNNING'`,
+      [goalId, finishedAt, JSON.stringify(plan.steps), plan.summary],
+    );
+    return true;
+  });
+}
+
+export async function listGoalAttempts(goalId: string, limit = 20): Promise<GoalAttemptRow[]> {
+  return mapRows<GoalAttemptRow>(await query(
+    `SELECT ${ATTEMPT_COLUMNS} FROM agent_goal_attempts WHERE goal_id = $1 ORDER BY attempt_no DESC LIMIT $2`,
+    [goalId, Math.min(Math.max(limit, 1), 100)],
+  ));
 }
 
 export async function addGoal(input: {
@@ -285,6 +429,10 @@ export async function addGoal(input: {
     ],
   );
   return mapRow<GoalRow>(row) as GoalRow;
+}
+
+export async function getGoal(id: string): Promise<GoalRow | null> {
+  return mapRow<GoalRow>(await queryOne(`SELECT ${GOAL_COLUMNS} FROM agent_goals WHERE id = $1`, [id]));
 }
 
 export async function listGoals(
@@ -318,6 +466,13 @@ export async function updateGoal(
     pinned: boolean;
     resolution: string;
     nextReviewAt: string | null;
+    dailyStepBudget: number;
+    dailyTimeBudgetMs: number;
+    nextAttemptAt: string | null;
+    proposedEnd: GoalProposedEnd | null;
+    proposedEndReason: string;
+    blockedReason: string | null;
+    quietAttempts: number;
   }>,
 ): Promise<GoalRow | null> {
   const sets: string[] = [];
@@ -333,6 +488,13 @@ export async function updateGoal(
   if (patch.pinned !== undefined) push('pinned = $?', patch.pinned);
   if (patch.resolution !== undefined) push('resolution = $?', patch.resolution);
   if (patch.nextReviewAt !== undefined) push('next_review_at = $?', patch.nextReviewAt);
+  if (patch.dailyStepBudget !== undefined) push('daily_step_budget = $?', patch.dailyStepBudget);
+  if (patch.dailyTimeBudgetMs !== undefined) push('daily_time_budget_ms = $?', patch.dailyTimeBudgetMs);
+  if (patch.nextAttemptAt !== undefined) push('next_attempt_at = $?', patch.nextAttemptAt);
+  if (patch.proposedEnd !== undefined) push('proposed_end = $?', patch.proposedEnd);
+  if (patch.proposedEndReason !== undefined) push('proposed_end_reason = $?', patch.proposedEndReason);
+  if (patch.blockedReason !== undefined) push('blocked_reason = $?', patch.blockedReason);
+  if (patch.quietAttempts !== undefined) push('quiet_attempts = $?', patch.quietAttempts);
   if (patch.status !== undefined) {
     push('status = $?', patch.status);
     // A goal that ended records when. Without it "completed" and "completed

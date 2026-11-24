@@ -45,6 +45,12 @@ async function ownedAgent(agentId: string, user: UserRow) {
   return agent;
 }
 
+async function ownedGoal(agentId: string, goalId: string) {
+  const goal = await mind.getGoal(goalId);
+  if (!goal || goal.agentId !== agentId) throw new NotFoundError('Goal');
+  return goal;
+}
+
 export async function mindRoutes(app: FastifyInstance): Promise<void> {
   // Show the saved validated call for informed consent, with credential fields
   // removed before serialization or truncation. Provider results stay private.
@@ -320,6 +326,9 @@ export async function mindRoutes(app: FastifyInstance): Promise<void> {
             for the reason given where the evidence is recorded.
           */
           progress: z.number().int().min(0).max(100).optional(),
+          /** What one goal may spend in any rolling 24 hours. */
+          dailyStepBudget: z.number().int().min(1).max(30).optional(),
+          dailyTimeBudgetMs: z.number().int().min(10_000).max(900_000).optional(),
         }),
         request,
       );
@@ -327,6 +336,78 @@ export async function mindRoutes(app: FastifyInstance): Promise<void> {
       const goal = await mind.updateGoal(params(request).goalId!, body);
       if (!goal || goal.agentId !== agent.id) throw new NotFoundError('Goal');
       return { goal };
+    }),
+  );
+
+  /** Every attempt a goal has had, newest first, and what today's budget has left. */
+  app.get(
+    '/api/agents/:id/mind/goals/:goalId/attempts',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const goal = await ownedGoal(agent.id, params(request).goalId!);
+      const [attempts, used] = await Promise.all([mind.listGoalAttempts(goal.id, 20), mind.goalBudgetUse(goal.id)]);
+      return {
+        attempts,
+        usage: { stepsUsed: used.stepsUsed, msUsed: used.msUsed, stepBudget: goal.dailyStepBudget,
+          timeBudgetMs: goal.dailyTimeBudgetMs, windowStartedAt: used.windowStartedAt },
+      };
+    }),
+  );
+
+  /**
+   * The owner accepting an ending the agent proposed.
+   *
+   * The only route that turns a proposal into a status. It goes through the
+   * same repository function as the owner's own edit, so what the agent said
+   * becomes the resolution text and nothing else about the goal changes.
+   */
+  app.post(
+    '/api/agents/:id/mind/goals/:goalId/accept-end',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const goal = await ownedGoal(agent.id, params(request).goalId!);
+      if (goal.status !== 'ACTIVE' || !goal.proposedEnd) throw new ConflictError('This goal has no proposed ending to accept.');
+      const settled = await mind.updateGoal(goal.id, {
+        status: goal.proposedEnd === 'DONE' ? 'COMPLETED' : 'ABANDONED',
+        resolution: goal.proposedEndReason, proposedEnd: null, proposedEndReason: '',
+      });
+      await ops.audit({ actorUserId: user.id, action: 'mind.goal.end.accepted', entityType: 'agent', entityId: agent.id,
+        data: { goalId: goal.id, end: goal.proposedEnd } });
+      return { goal: settled };
+    }),
+  );
+
+  /** Keep the goal going. The attempt may start again on the next wake. */
+  app.post(
+    '/api/agents/:id/mind/goals/:goalId/dismiss-end',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const goal = await ownedGoal(agent.id, params(request).goalId!);
+      if (!goal.proposedEnd) throw new ConflictError('This goal has no proposed ending to dismiss.');
+      const kept = await mind.updateGoal(goal.id, { proposedEnd: null, proposedEndReason: '', quietAttempts: 0,
+        nextAttemptAt: new Date(Date.now() - 1_000).toISOString() });
+      await ops.audit({ actorUserId: user.id, action: 'mind.goal.end.dismissed', entityType: 'agent', entityId: agent.id,
+        data: { goalId: goal.id, end: goal.proposedEnd } });
+      return { goal: kept };
+    }),
+  );
+
+  /** The owner has checked what a possibly half-finished write did. */
+  app.post(
+    '/api/agents/:id/mind/goals/:goalId/unblock',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const goal = await ownedGoal(agent.id, params(request).goalId!);
+      if (!goal.blockedReason) throw new ConflictError('This goal is not blocked.');
+      const cleared = await mind.updateGoal(goal.id, { blockedReason: null,
+        nextAttemptAt: new Date(Date.now() - 1_000).toISOString() });
+      await ops.audit({ actorUserId: user.id, action: 'mind.goal.unblocked', entityType: 'agent', entityId: agent.id,
+        data: { goalId: goal.id } });
+      return { goal: cleared };
     }),
   );
 
