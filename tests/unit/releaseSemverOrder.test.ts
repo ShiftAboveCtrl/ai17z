@@ -100,7 +100,7 @@ ConvertTo-Json -InputObject @($answers) -Compress`;
 });
 
 describe.skipIf(!hasBash)('the shipped Unix release resolvers', () => {
-  it.each(['install-ai17z-ubuntu.sh', 'install-ai17z-macos.sh'])('%s loads the shared helper for a standalone download', (file) => {
+  it.each(['install-ai17z-ubuntu.sh', 'install-ai17z-macos.sh'])('%s selects standalone without fetching code', (file) => {
     const text = read(file);
     const start = text.indexOf('pick_tag() {');
     const code = text.slice(start, text.indexOf('\n}\n', start) + 3);
@@ -109,17 +109,15 @@ describe.skipIf(!hasBash)('the shipped Unix release resolvers', () => {
       const out = spawnSync('bash', ['-s'], { cwd: room, encoding: 'utf8', input: `
 WORK="$PWD"; AI17Z_DOWNLOAD_HOSTS='code.ai17z.io'
 ai17z_fetch() {
-  case "$2" in
-    https://raw.githubusercontent.com/*) return 1 ;;
-    https://code.ai17z.io/*/ai17z-release.sh) cp '${bashPath('packaging/unix/ai17z-release.sh')}' "$1" ;;
-    *) return 2 ;;
-  esac
+  printf 'Unexpected fetch: %s\\n' "$2" >&2
+  return 99
 }
 ${code}
 RELEASE='decoy'; pick_tag '${JSON.stringify(cases[1]!.releases)}' 'a_<version>.deb' ''
 pick_tag '${JSON.stringify(cases[1]!.releases)}' 'a_<version>.deb' 'v1.0.0-beta.99'
 ` });
       expect(out.status, out.stderr).toBe(0);
+      expect(out.stderr).toBe('');
       expect(out.stdout.trim()).toBe('v1.0.0-beta.100\nv1.0.0-beta.99');
     } finally { rmSync(room, { recursive: true, force: true }); }
   });
