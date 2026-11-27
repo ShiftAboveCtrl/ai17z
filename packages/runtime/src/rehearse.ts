@@ -8,7 +8,7 @@ import {
   observability,
 } from '@xbam/database';
 import { NotFoundError, PipelineError, createLogger, newId } from '@xbam/shared';
-import type { EventType, JobRecord, TraceEvent, TraceEventType } from '@xbam/shared/contracts';
+import type { ChannelId, EventType, JobRecord, TraceEvent, TraceEventType } from '@xbam/shared/contracts';
 import { ingestNormalizedEvent } from './ingest';
 
 const log = createLogger('rehearse');
@@ -60,8 +60,11 @@ const log = createLogger('rehearse');
 export const REHEARSAL_PATIENCE_MS = 90_000;
 
 export interface RehearsalSubject {
-  /** Where this came from. `mock` is something somebody typed. */
-  channel: 'x' | 'mock';
+  /**
+   * Where this came from. `mock` is something somebody typed; any other value
+   * is the channel of the account that read a real post.
+   */
+  channel: ChannelId;
   /** The status id, when the subject is a real post. */
   remoteId?: string | null;
   url?: string | null;

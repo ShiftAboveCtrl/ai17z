@@ -248,7 +248,7 @@ export class BrowserTaskRunner {
           touchHealthCheck: true,
         });
 
-        const session = await leaseSession({ accountId: account.id, engine, mode, profileDir, cdpUrl: ctx.session?.cdpUrl ?? null, channel, headless: false });
+        const session = await leaseSession({ accountId: account.id, engine, mode, profileDir, cdpUrl: ctx.session?.cdpUrl ?? null, channel, network: account.channel, headless: false });
         try {
           await session.page.goto('https://x.com/login', { waitUntil: 'domcontentloaded', timeout: 45_000 });
         } finally {
@@ -386,7 +386,7 @@ export class BrowserTaskRunner {
       }
 
       case 'SCREENSHOT': {
-        const session = await leaseSession({ accountId: account.id, engine, mode, profileDir, cdpUrl: ctx.session?.cdpUrl ?? null, channel, headless: true });
+        const session = await leaseSession({ accountId: account.id, engine, mode, profileDir, cdpUrl: ctx.session?.cdpUrl ?? null, channel, network: account.channel, headless: true });
         try {
           const shot = await captureScreenshot(session.page, storageDir(), 'manual_capture');
           if (!shot) return { detail: 'Could not capture a screenshot from the current page.' };

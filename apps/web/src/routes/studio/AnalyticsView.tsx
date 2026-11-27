@@ -1,6 +1,7 @@
 import { useResource } from '@app/lib/hooks';
 import { timeAgo } from '@app/lib/format';
 import { EmptyState, Spinner } from '@app/components/ui';
+import { X_NETWORK_PROFILE, postUrlFor } from '@xbam/shared/contracts';
 import { Card, Gaps, Panel } from './shared';
 
 /**
@@ -182,7 +183,7 @@ export function AnalyticsView({ agentId }: { agentId: string }) {
                     <td className="max-w-md py-2.5 pr-4">
                       <a
                         className="break-words text-bone-dim hover:text-bone"
-                        href={`https://x.com/i/web/status/${row.remote_post_id}`}
+                        href={postUrlFor(X_NETWORK_PROFILE.channel, row.remote_post_id) ?? undefined}
                         target="_blank"
                         rel="noreferrer noopener"
                       >

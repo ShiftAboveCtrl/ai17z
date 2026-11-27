@@ -31,6 +31,16 @@ export interface SessionConfig {
   cdpUrl: string | null;
   headless: boolean;
   channel?: BrowserChannel | null;
+  /**
+   * Which social network this account is on, as its channel id ("x").
+   *
+   * Named `network` because `channel` above already means the browser build.
+   * It decides where a freshly started Chrome is sent and what a tab looks like
+   * when its tag was lost, both read from the network's profile. Omitted or
+   * unknown, the answer is X's, which is what every session did before there
+   * was a second network.
+   */
+  network?: string | null;
 }
 
 /** Everything known about the browser actually serving a session. */

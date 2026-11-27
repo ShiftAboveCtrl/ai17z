@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { Browser, BrowserContext, Page } from 'playwright';
 import { PipelineError, createLogger, currentBudget, envBool, errorMessage } from '@xbam/shared';
+import { X_NETWORK_PROFILE, getNetworkProfile, type NetworkProfile } from '@xbam/shared/contracts';
 import type { BrowserIdentity, LeasedSession, SessionConfig } from './types';
 import {
   cdpIdentity,
@@ -83,6 +84,18 @@ function isUsable(context: BrowserContext): boolean {
 }
 
 
+/**
+ * What a network's browser session looks like: its start page and its tabs.
+ *
+ * A network with no browser block, or none at all, gets X's. That is not a
+ * claim that it is X: it is the answer every session had before the profile
+ * existed, kept so an account whose channel is not described yet behaves as it
+ * did yesterday instead of starting on a blank page.
+ */
+export function browserProfileFor(network: string | null | undefined): NonNullable<NetworkProfile['browser']> {
+  return getNetworkProfile(network)?.browser ?? X_NETWORK_PROFILE.browser!;
+}
+
 const contexts = new Map<string, Entry>();
 
 /**
@@ -105,7 +118,7 @@ async function openOnce(config: SessionConfig): Promise<Entry> {
   // the first snapshot rather than from the first action.
   const started = openContext(config)
     .then(async (entry) => {
-      await adoptOpenTabs(entry.context, entry.tabs).catch(() => undefined);
+      await adoptOpenTabs(entry.context, entry.tabs, browserProfileFor(config.network).tabs).catch(() => undefined);
       return entry;
     })
     .finally(() => opening.delete(config.accountId));
@@ -233,7 +246,7 @@ async function openContext(config: SessionConfig): Promise<Entry> {
   const launched = await launchChrome({
     engine: config.engine,
     profileDir: config.profileDir,
-    startUrl: 'https://x.com/home',
+    startUrl: browserProfileFor(config.network).startUrl,
     headless: config.headless,
   });
 

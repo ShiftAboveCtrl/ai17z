@@ -1,3 +1,5 @@
+import type { ChallengeSignal } from '../browserKit/authObserver';
+
 /**
  * Every piece of X DOM knowledge lives in this file.
  *
@@ -174,7 +176,7 @@ export function articleForStatus(statusId: string): string {
  * to the person and waits. Matching is deliberately generous, because a
  * challenge that goes unrecognised is one an automated flow might blunder into.
  */
-export const CHALLENGE_SIGNALS: { kind: string; describe: string; selector?: string; text?: RegExp }[] = [
+export const CHALLENGE_SIGNALS: ChallengeSignal[] = [
   {
     kind: 'two_factor',
     describe: 'X is asking for a two-factor code.',

@@ -1,5 +1,6 @@
 import type { Page } from 'playwright';
 import type { AuthObservation } from '../contract';
+import { observeAuthWith, type AuthSignals } from '../browserKit';
 import { CHALLENGE_SIGNALS, SEL, SEL_AUTH } from './selectors';
 
 /**
@@ -8,58 +9,22 @@ import { CHALLENGE_SIGNALS, SEL, SEL_AUTH } from './selectors';
  * This function looks. It does not type, click, dismiss, or solve. When X asks
  * for a code, a CAPTCHA, a key, or a confirmation that a sign-in was really the
  * owner, the only correct behaviour is to stop and hand the window back to the
- * person, and that is enforced here by there being no other branch.
+ * person, and that is enforced by there being no other branch.
+ *
+ * The loop itself is the browser kit's, shared by every network. What is X's is
+ * the signals it reads: where a signed-in page shows its marker, what a
+ * challenge looks like, and where the form fields are.
  */
+export const X_AUTH_SIGNALS: AuthSignals = {
+  loggedIn: SEL.loggedIn,
+  challenge: CHALLENGE_SIGNALS,
+  usernameField: SEL_AUTH.usernameField,
+  passwordField: SEL_AUTH.passwordField,
+  readHandle,
+};
+
 export async function observeAuthPage(page: Page): Promise<AuthObservation> {
-  // Signed in is checked first and cheaply: once the account switcher is on the
-  // page, nothing else about the sign-in flow matters.
-  if (await visible(page, SEL.loggedIn, 1_500)) {
-    return { state: 'SIGNED_IN', detail: 'Signed in.', handle: await readHandle(page) };
-  }
-
-  const body = await bodyText(page);
-  if (body === null) return { state: 'UNREACHABLE', detail: 'The sign-in window is not responding.' };
-
-  // A challenge outranks everything below it. Checking it before the password
-  // field matters: several challenge screens also carry an input box, and
-  // mistaking one for a login form is how an automated flow ends up typing into
-  // a security prompt.
-  for (const signal of CHALLENGE_SIGNALS) {
-    const bySelector = signal.selector ? await visible(page, signal.selector, 500) : false;
-    const byText = signal.text ? signal.text.test(body) : false;
-    if (bySelector || byText) {
-      return { state: 'CHALLENGE', detail: signal.describe, challengeKind: signal.kind };
-    }
-  }
-
-  if (await visible(page, SEL_AUTH.usernameField, 500)) {
-    return { state: 'AWAITING_LOGIN', detail: 'Waiting for the username.' };
-  }
-  if (await visible(page, SEL_AUTH.passwordField, 500)) {
-    return { state: 'AWAITING_LOGIN', detail: 'Waiting for the password.' };
-  }
-
-  // Between steps X often shows nothing recognisable for a second or two. That
-  // is a sign-in in progress, not a failure.
-  return { state: 'AUTHENTICATING', detail: 'Sign-in in progress.' };
-}
-
-async function visible(page: Page, selector: string, timeout: number): Promise<boolean> {
-  try {
-    await page.locator(selector).first().waitFor({ state: 'visible', timeout });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function bodyText(page: Page): Promise<string | null> {
-  try {
-    return (await page.locator('body').innerText({ timeout: 5_000 })) ?? '';
-  } catch {
-    // A navigation mid-read is normal during a sign-in; it is not unreachable.
-    return page.isClosed() ? null : '';
-  }
+  return observeAuthWith(page, X_AUTH_SIGNALS);
 }
 
 /**

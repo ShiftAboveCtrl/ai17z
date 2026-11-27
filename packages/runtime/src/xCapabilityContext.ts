@@ -1,3 +1,4 @@
+import { networkHas } from '@xbam/shared/contracts';
 import { accounts as accountsRepo, workers as workersRepo } from '@xbam/database';
 import { capabilitiesFor, type WorkerRole } from '@xbam/jobs';
 import { buildChannelContext } from './channelContext';
@@ -23,7 +24,9 @@ import { buildChannelContext } from './channelContext';
 export async function contextFor(accountId: string | null, jobId: string | null) {
   if (!accountId) return null;
   const account = await accountsRepo.getAccount(accountId);
-  if (!account || account.channel !== 'x') return null;
+  // Whether this network is one the capability tools can be bound to, not
+  // whether its name is "x": a network gets them by saying so in its profile.
+  if (!account || !networkHas(account.channel, 'capabilityTools')) return null;
   return buildChannelContext(account, jobId);
 }
 

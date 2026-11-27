@@ -3,6 +3,7 @@ import { FlaskConical, Link2, MessageSquare } from 'lucide-react';
 import { ApiError, get, post } from '@app/lib/api';
 import { useElapsed, useResource } from '@app/lib/hooks';
 import { ChoiceGroup, ChoiceOption, EmptyState, Field, Spinner, Working } from '@app/components/ui';
+import { networkHas } from '@xbam/shared/contracts';
 import { Panel } from './shared';
 import { ReplyInspector } from '@app/components/ReplyInspector';
 
@@ -55,7 +56,8 @@ export function LabView({ agentId }: { agentId: string }) {
   const [reading, setReading] = useState<string | null>(null);
 
   const accounts = useResource<{ items: { id: string; channel: string; enabled: boolean }[] }>('/api/accounts');
-  const hasX = (accounts.data?.items ?? []).some((account) => account.channel === 'x' && account.enabled);
+  // Whether any connected account is on a network AI17Z can read posts from.
+  const hasReader = (accounts.data?.items ?? []).some((account) => networkHas(account.channel, 'accountReads') && account.enabled);
 
   const run = async () => {
     setBusy(true);
@@ -145,7 +147,7 @@ export function LabView({ agentId }: { agentId: string }) {
                   placeholder="https://x.com/someone/status/1234567890123456789"
                 />
               </Field>
-              {!hasX && (
+              {!hasReader && (
                 <p className="text-[12px] leading-relaxed text-bone-faint">
                   AI17Z reads X through a signed-in browser, so this needs one of your X accounts connected. You can
                   still try the agent against a message you type.
@@ -160,7 +162,7 @@ export function LabView({ agentId }: { agentId: string }) {
             type="button"
             className="btn-primary"
             onClick={() => void run()}
-            disabled={busy || (mode === 'typed' ? !text.trim() : !postRef.trim() || !hasX)}
+            disabled={busy || (mode === 'typed' ? !text.trim() : !postRef.trim() || !hasReader)}
           >
             {busy && <Spinner />}
             <FlaskConical className="h-3.5 w-3.5" aria-hidden />

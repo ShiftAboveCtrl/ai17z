@@ -4,7 +4,7 @@ import { ApiError, artifactObjectUrl, del, get, patch, post, put } from '@app/li
 import { useElapsed, useResource } from '@app/lib/hooks';
 import type { AccountRow, BrowserTask, DiagnosticRow } from '@app/lib/types';
 import { humanStatus, timeAgo, toneFor } from '@app/lib/format';
-import { describeSignIn } from '@xbam/shared/contracts';
+import { describeSignIn, isBrowserNetwork } from '@xbam/shared/contracts';
 import { BlueskyConnect } from './BlueskyConnect';
 import { CadencePanel } from './CadencePanel';
 import { SignInProgress } from './SignInProgress';
@@ -152,7 +152,7 @@ export function SessionPanel({
   if (error) return <ErrorPanel title="Session details could not be loaded." detail={error} />;
   if (!data) return null;
 
-  const browserBacked = data.account.channel === 'x';
+  const browserBacked = isBrowserNetwork(data.account.channel);
   const isBluesky = data.account.channel === 'bluesky';
 
   return (

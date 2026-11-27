@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useResource } from '@app/lib/hooks';
 import { EmptyState, Spinner } from '@app/components/ui';
+import { X_NETWORK_PROFILE, postUrlFor } from '@xbam/shared/contracts';
 import { Card, NoAccount, Panel, Reasons } from './shared';
 
 /**
@@ -109,7 +110,7 @@ export function GrowthView({ agentId }: { agentId: string }) {
               action={
                 <a
                   className="btn-ghost text-[12px]"
-                  href={`https://x.com/i/web/status/${opportunity.statusId}`}
+                  href={postUrlFor(X_NETWORK_PROFILE.channel, opportunity.statusId) ?? undefined}
                   target="_blank"
                   rel="noreferrer noopener"
                 >

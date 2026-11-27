@@ -9,6 +9,7 @@ import {
   ops,
   type UserRow,
 } from '@xbam/database';
+import { canReadAccounts } from '@xbam/channels';
 import { explainRehearsal, rehearse } from '@xbam/runtime';
 import { handler, params, parseBody, requireUser } from '../http';
 
@@ -113,8 +114,8 @@ export async function labRoutes(app: FastifyInstance): Promise<void> {
       const linked = await accountsRepo.listAgentAccounts(agent.id);
       const linkedIds = new Set(linked.map((link) => link.accountId));
       const reader =
-        owned.find((account) => account.channel === 'x' && account.enabled && linkedIds.has(account.id)) ??
-        owned.find((account) => account.channel === 'x' && account.enabled) ??
+        owned.find((account) => canReadAccounts(account.channel) && account.enabled && linkedIds.has(account.id)) ??
+        owned.find((account) => canReadAccounts(account.channel) && account.enabled) ??
         null;
 
       if (!reader) {

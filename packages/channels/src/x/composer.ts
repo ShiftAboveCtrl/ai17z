@@ -1,6 +1,17 @@
 import { PipelineError, sleep } from '@xbam/shared';
-import { retagIfLost, type Locator, type Page } from '@xbam/browser';
+import type { Locator, Page } from '@xbam/browser';
 import type { ActionRequest, ActionResult, ChannelContext, MediaAttachment, VerificationResult } from '../contract';
+import {
+  MEDIA_UPLOAD_BUDGET_MS,
+  attachMediaFiles,
+  fillComposer,
+  fingerprint,
+  readyForTyping,
+  returnToIdle as kitReturnToIdle,
+  visibleDialogOf,
+  waitForEnabled,
+  type OpenComposer,
+} from '../browserKit';
 import { SEL, X_URLS, articleForStatus } from './selectors';
 import { goto, readArticle, selfHandles, settle, withSession } from './page';
 import { anchorTarget } from './engagement';
@@ -20,11 +31,15 @@ import { buildStatusUrl, extractStatusId, normalizeHandle } from './targets';
  * and goes and looks for it afterwards.
  */
 
-export interface OpenComposer {
-  scope: ReturnType<Page['locator']>;
-  editor: ReturnType<Page['locator']>;
-  inDialog: boolean;
-}
+export type { OpenComposer };
+
+/*
+  The parts of this that are the same on any site now live in the browser kit:
+  proving a keystroke would land, typing and reading the whole draft back, and
+  the fingerprint that compares them. They are re-exported under the names this
+  adapter has always had, so what imports them from here is untouched.
+*/
+export { fingerprint, fillComposer, readyForTyping };
 
 /**
  * Waits for a composer to appear, wherever X decided to put it.
@@ -175,13 +190,7 @@ async function composerLetGo(editor: Locator, timeoutMs = 2_500): Promise<boolea
  * safety check that silently stops checking is worse than one that fails.
  */
 async function visibleDialog(page: Page): Promise<Locator | null> {
-  const dialogs = page.locator(SEL.dialog);
-  const count = await dialogs.count().catch(() => 0);
-  for (let index = 0; index < count; index += 1) {
-    const candidate = dialogs.nth(index);
-    if (await candidate.isVisible().catch(() => false)) return candidate;
-  }
-  return null;
+  return visibleDialogOf(page, SEL.dialog);
 }
 
 /** Handles from the composer's own "Replying to @someone" line. */
@@ -200,64 +209,14 @@ export async function composerReplyingTo(page: Page): Promise<string[]> {
  * Puts the action tab back to a known state after acting.
  *
  * Best-effort by design: a failure here has nothing to do with whether the
- * reply was sent, and reporting it as one would be wrong.
+ * reply was sent, and reporting it as one would be wrong. The kit re-asserts the
+ * tab's tag afterwards, because the navigation just cleared it.
  */
-/**
- * Polls until a control becomes enabled, or gives up.
- *
- * Playwright has no built-in wait for "enabled", only for visible, attached,
- * stable and editable. X toggles `aria-disabled` on its submit buttons a beat
- * after the composer changes, so a single check is a coin toss.
- */
-async function waitForEnabled(locator: Locator, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await locator.isEnabled().catch(() => false)) return true;
-    await sleep(250);
-  }
-  return false;
-}
-
 export async function returnToIdle(page: Page): Promise<void> {
-  try {
-    if (await visibleDialog(page)) {
-      await page.keyboard.press('Escape').catch(() => undefined);
-    }
-    await page.goto(X_URLS.home, { waitUntil: 'domcontentloaded', timeout: 20_000 });
-
-    // Re-assert the tag, because that navigation just cleared it.
-    //
-    // A tab is identified by `window.name`, and a navigation wipes it. Leases
-    // retag on the way in, so work always found its tab -- but between actions
-    // the action tab sat at /home with an empty name. Health reported ACTION as
-    // MISSING while the tab was plainly open, and adoption fell back to "any
-    // untagged tab", which is a guess: open a tab yourself and it could have
-    // been adopted as the one AI17Z posts from.
-    await retagIfLost(page, 'ACTION');
-  } catch {
-    // Nothing to do about it, and nothing depends on it.
-  }
+  await kitReturnToIdle(page, { homeUrl: X_URLS.home, dialogSelector: SEL.dialog, role: 'ACTION' });
 }
 
 /** Looks for the reply we just sent, matching on author and text prefix. */
-/**
- * Reduces text to the letters and digits in it, lowercased.
- *
- * Because what we submitted and what X renders are never byte-identical. X
- * turns every @mention into a link element, and `innerText` puts whitespace
- * around a link: "@someone-August" comes back as "@someone -August". Smart
- * quotes, non-breaking spaces and zero-width characters do the same kind of
- * thing more quietly.
- *
- * This mattered more than it looks. Failing to recognise its own reply is not
- * a cosmetic problem: it is the check that tells "X refused this" apart from
- * "X accepted it and left the composer up", and retrying the second posts
- * twice. Two near-duplicate replies on the account are what this looked like
- * from outside.
- */
-export function fingerprint(text: string): string {
-  return text.toLowerCase().replace(/[^a-z0-9]+/g, '');
-}
 
 async function scanForOwnReply(
   page: Page,
@@ -293,123 +252,6 @@ async function scanForOwnReply(
   return null;
 }
 
-/**
- * How long to wait for an editor to become genuinely usable.
- *
- * X mounts the contenteditable node before it wires the editor behind it, so
- * "the locator resolved" and "a keystroke will land" are several hundred
- * milliseconds apart on a cold profile.
- */
-const COMPOSER_READY_MS = 10_000;
-
-/**
- * How many times a draft may be prepared before giving up.
- *
- * Bounded on purpose. The failure this replaces was an open/type/clear/retype
- * cycle a person could watch happening, and an unbounded version of it is worse
- * than a refusal: it hammers the editor and leaves drafts behind.
- */
-const COMPOSER_ATTEMPTS = 2;
-
-/**
- * Proves a keystroke would land in this editor, before any keystroke is sent.
- *
- * This is the fix for a bug that was visible from across the room: the reply
- * would start typing, arrive missing its first characters, get cleared, and be
- * typed again. The cause was two swallowed results --
- * `editor.focus().catch(() => undefined)` immediately followed by
- * `editor.type(...).catch(() => undefined)`. If focus landed anywhere but the
- * editor, which is exactly what X's @-mention typeahead exists to do, the
- * leading keystrokes went to the overlay and the draft arrived short; and if
- * the editor was re-rendered mid-type, the throw was discarded and a partial
- * draft was left sitting there.
- *
- * Nothing is typed until this returns. Recovery still exists below, but it is
- * no longer the mechanism: it is the exception.
- */
-export async function readyForTyping(editor: Locator): Promise<void> {
-  await editor.waitFor({ state: 'visible', timeout: COMPOSER_READY_MS }).catch(() => {
-    throw PipelineError.retryable('composer_not_visible', 'The composer did not become visible.');
-  });
-
-  // Editable, not merely present. `isContentEditable` is false while X still
-  // has the node mounted as a placeholder.
-  const editable = await editor.evaluate((el) => (el as HTMLElement).isContentEditable).catch(() => false);
-  if (!editable) {
-    throw PipelineError.retryable(
-      'composer_not_editable',
-      'The composer is on screen but is not accepting input yet.',
-    );
-  }
-
-  await editor.focus();
-
-  // Verified, never assumed. `document.activeElement` is the only thing that
-  // knows where the next keystroke actually goes.
-  const holdsFocus = await editor
-    .evaluate((el) => el === document.activeElement || el.contains(document.activeElement))
-    .catch(() => false);
-  if (!holdsFocus) {
-    throw PipelineError.retryable(
-      'composer_not_focused',
-      'Focus did not land in the composer, so nothing was typed into it.',
-    );
-  }
-}
-
-/** Empties the editor. Select-all inside it, never across the page. */
-async function clearComposer(page: Page, editor: Locator): Promise<void> {
-  await editor.focus().catch(() => undefined);
-  await page.keyboard.press('Control+A').catch(() => undefined);
-  await page.keyboard.press('Delete').catch(() => undefined);
-  await settle(300, 600);
-}
-
-/**
- * Puts the text into the composer, and proves the whole of it went in.
- *
- * Two changes from the version that shipped the truncation. Readiness is proved
- * before typing rather than recovered from afterwards, and the check is on the
- * *entire* draft rather than its first sixty characters -- a draft correct at
- * the start and cut off later passed the old check, which is the shape of the
- * bug that was actually happening.
- *
- * The comparison is on the fingerprint, not the raw string, because X's editor
- * turns a typed @mention into a link node and `innerText` puts spaces around
- * it. It strips punctuation and case and nothing else: a missing word, a
- * missing URL, or a missing first character all still fail.
- */
-export async function fillComposer(page: Page, editor: Locator, text: string): Promise<string> {
-  const wanted = fingerprint(text);
-  let landed = '';
-
-  for (let attempt = 0; attempt < COMPOSER_ATTEMPTS; attempt += 1) {
-    if (attempt > 0) await clearComposer(page, editor);
-
-    await readyForTyping(editor);
-
-    try {
-      await editor.type(text, { delay: 12 });
-    } catch {
-      // A throw here means X replaced the node mid-type. The draft is partial
-      // by definition, so fall through to the check, which will say so.
-    }
-    await settle(400, 900);
-
-    landed = (await editor.innerText().catch(() => '')).trim();
-    if (fingerprint(landed) === wanted) return landed;
-  }
-
-  // Deliberately not a submit. A composer holding the wrong text is the one
-  // situation where doing nothing is the whole job.
-  throw PipelineError.retryable(
-    landed ? 'composer_text_mismatch' : 'composer_empty',
-    landed
-      ? `The composer holds ${landed.length} characters of a ${text.length} character draft, after ${COMPOSER_ATTEMPTS} attempts.`
-      : `The composer was still empty after typing, ${COMPOSER_ATTEMPTS} times.`,
-    { wantedChars: text.length, landedChars: landed.length },
-  );
-}
 
 /**
  * A post of ours that was found on the remote.
@@ -476,26 +318,15 @@ export function mediaSeenOnPost(sent: readonly Pick<MediaAttachment, 'kind'>[], 
 }
 
 /** How long each kind of upload is given before it is called failed. */
-export const MEDIA_UPLOAD_BUDGET_MS = { IMAGE: 60_000, GIF: 90_000, VIDEO: 300_000 } as const;
-
-const UPLOAD_FAILED = /fail|couldn.?t|could not|unable|too large|not supported|try again|went wrong/i;
+export { MEDIA_UPLOAD_BUDGET_MS };
 
 /**
  * Puts files in the composer and waits until X has them.
  *
- * The files go into the composer's own file input with `setInputFiles`. The
- * "add photos" button is never clicked: it opens a native picker, which nothing
- * here can drive, and X's covered-UI problem applies to it as much as to the
- * editor. Focus goes back to the editor afterwards, because attaching moves it
- * and the keyboard submit fallback needs it there.
- *
- * Done when every file has its tile, none is still showing progress, and the
- * post button is enabled -- X disables it for the length of an upload, so an
- * enabled button is X agreeing, not this code guessing. Bounded, because a
- * video that never finishes is a stuck tab and not a reason to wait forever.
- *
- * Everything that goes wrong here is *retryable*: this runs before the submit,
- * so nothing has been sent and trying again cannot post twice.
+ * The mechanics are the browser kit's. What is X's is where its upload UI is
+ * and what it calls itself in the sentence an owner reads when it goes wrong.
+ * Everything that fails here is retryable: this runs before the submit, so
+ * nothing has been sent and trying again cannot post twice.
  */
 export async function attachMedia(
   page: Page,
@@ -503,48 +334,19 @@ export async function attachMedia(
   media: readonly MediaAttachment[],
   options: { timeoutMs?: number; pollMs?: number } = {},
 ): Promise<void> {
-  if (media.length === 0) return;
-  const pollMs = options.pollMs ?? 500;
-  const timeoutMs = options.timeoutMs ?? Math.max(...media.map((m) => MEDIA_UPLOAD_BUDGET_MS[m.kind]));
-
-  const input = opened.scope.locator(SEL.mediaInput).first();
-  if ((await input.count().catch(() => 0)) === 0) {
-    throw PipelineError.retryable('media_input_missing', 'The composer has no file input, so the attachment could not be added. Nothing was posted.');
-  }
-  try {
-    await input.setInputFiles(
-      media.map((m) => m.path),
-      { timeout: 15_000 },
-    );
-  } catch (error) {
-    throw PipelineError.retryable(
-      'media_upload_failed',
-      `The attachment could not be given to the composer: ${(error as Error).message}. Nothing was posted.`,
-    );
-  }
-
-  const items = opened.scope.locator(SEL.composerMediaItem);
-  const progress = opened.scope.locator(SEL.composerMediaProgress);
-  const submit = opened.scope.locator(SEL.anySubmit).first();
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const toast = ((await page.locator(SEL.toast).first().innerText({ timeout: 500 }).catch(() => '')) ?? '').trim();
-    if (toast && UPLOAD_FAILED.test(toast)) {
-      throw PipelineError.retryable('media_upload_failed', `X rejected the attachment: ${toast.slice(0, 160)}. Nothing was posted.`);
-    }
-    const attached = await items.count().catch(() => 0);
-    const busy = await progress.count().catch(() => 0);
-    if (attached >= media.length && busy === 0 && (await submit.isEnabled().catch(() => false))) break;
-    if (Date.now() >= deadline) {
-      throw PipelineError.retryable(
-        'media_upload_timeout',
-        `X had ${attached} of ${media.length} attachment${media.length === 1 ? '' : 's'} ready after ${Math.round(timeoutMs / 1000)} seconds${busy > 0 ? ' and was still uploading' : ''}. Nothing was posted.`,
-        { attached, expected: media.length, uploading: busy },
-      );
-    }
-    await sleep(pollMs);
-  }
-  await opened.editor.focus();
+  return attachMediaFiles(
+    page,
+    opened,
+    media,
+    {
+      fileInput: SEL.mediaInput,
+      attachedItem: SEL.composerMediaItem,
+      uploadProgress: SEL.composerMediaProgress,
+      submit: SEL.anySubmit,
+      toast: SEL.toast,
+    },
+    { ...options, networkName: 'X' },
+  );
 }
 
 /**

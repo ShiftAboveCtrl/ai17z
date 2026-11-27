@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { BrowserContext, Page } from 'playwright';
 import { PipelineError, createLogger, errorMessage } from '@xbam/shared';
-import { reconcileTabs } from './reconcile';
+import { NETWORK_TAB_ROLES, type NetworkTabRole } from '@xbam/shared/contracts';
+import { reconcileTabs, type TabShapes } from './reconcile';
 
 const log = createLogger('browser-tabs');
 
@@ -33,9 +34,13 @@ const log = createLogger('browser-tabs');
  * See `reconcile.ts` for how identity is decided, and what is never touched.
  */
 
-export type TabRole = 'ACTION' | 'MENTIONS' | 'NOTIFICATIONS' | 'RESEARCH';
+/**
+ * The roles come from the network profile contract, so the browser package and
+ * a network's description of its tabs cannot name different sets.
+ */
+export type TabRole = NetworkTabRole;
 
-export const TAB_ROLES: readonly TabRole[] = ['ACTION', 'MENTIONS', 'NOTIFICATIONS', 'RESEARCH'] as const;
+export const TAB_ROLES: readonly TabRole[] = NETWORK_TAB_ROLES;
 
 /** Written into `window.name`, which survives navigation within an origin. */
 const TAG_PREFIX = 'ai17z-tab:';
@@ -247,7 +252,7 @@ async function findExisting(context: BrowserContext, role: TabRole): Promise<Pag
  * Called once when a session is established, so the reported state matches the
  * browser from the first health snapshot rather than from the first action.
  */
-export async function adoptOpenTabs(context: BrowserContext, tabs: TabMap): Promise<void> {
+export async function adoptOpenTabs(context: BrowserContext, tabs: TabMap, shapes?: TabShapes): Promise<void> {
   const pages = context.pages().filter((p) => !p.isClosed());
   const tags = await Promise.all(pages.map((p) => readTag(p)));
 
@@ -268,7 +273,7 @@ export async function adoptOpenTabs(context: BrowserContext, tabs: TabMap): Prom
   // The next worker opened its own beside it, and that is how one profile came
   // to hold fifteen pages, twelve of them the same timeline, until Chrome was
   // killed for memory.
-  const plan = reconcileTabs(described);
+  const plan = reconcileTabs(described, shapes);
 
   for (const [role, id] of Object.entries(plan.adopt)) {
     const page = pages[Number(id)];

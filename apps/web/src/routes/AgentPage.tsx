@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import { Copy, ExternalLink, LineChart, Package, Pencil, Play, Search, Square, Trash2 } from 'lucide-react';
-import type { Blocker } from '@xbam/shared/contracts';
+import { getNetworkProfile, isBrowserNetwork, profileUrlFor, type Blocker } from '@xbam/shared/contracts';
 import { ApiError, del, patch, post } from '@app/lib/api';
 import { startAgent } from '@app/lib/setup';
 import { useResource } from '@app/lib/hooks';
@@ -298,15 +298,15 @@ export function AgentPage() {
               )}
               {running ? 'Stop' : 'Start'}
             </button>
-            {channel?.channel === 'x' && channel.handle && (
+            {channel && isBrowserNetwork(channel.channel) && channel.handle && (
               <a
                 className="btn-quiet"
-                href={`https://x.com/${channel.handle}`}
+                href={profileUrlFor(channel.channel, channel.handle) ?? undefined}
                 target="_blank"
                 rel="noreferrer noopener"
               >
                 <ExternalLink className="h-3.5 w-3.5" aria-hidden />
-                Open X
+                Open {getNetworkProfile(channel.channel)?.displayName ?? 'profile'}
               </a>
             )}
             <Link className="btn-quiet" to="/activity">

@@ -9,6 +9,7 @@ export * from './policy';
 export * from './cadence';
 export * from './radar';
 export * from './xPacing';
+export * from './networkProfile';
 export * from './marketplacePurchase';
 export * from './easy';
 export * from './multimodal';

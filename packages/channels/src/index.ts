@@ -3,6 +3,7 @@ export { farcasterAdapter } from './farcaster/index';
 export { CastReference as FarcasterCastReference } from './farcaster/client';
 export * as farcasterReads from './farcaster/reads';
 export * from './registry';
+export { accountReaderFor, canReadAccounts, type AccountReader } from './accountReaders';
 export { mockAdapter } from './mock/index';
 export { xAdapter } from './x/index';
 export { telegramAdapter, inspectBot as inspectTelegramBot, readChat as readTelegramChat, describeChat as describeTelegramChat } from './telegram/index';

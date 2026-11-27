@@ -10,7 +10,7 @@ import {
   personaSources,
   type UserRow,
 } from '@xbam/database';
-import { PERSONA_TARGET_POSTS } from '@xbam/channels';
+import { PERSONA_TARGET_POSTS, canReadAccounts } from '@xbam/channels';
 import { generate } from '@xbam/models';
 import {
   answersToCharacter,
@@ -162,12 +162,12 @@ export async function characterRoutes(app: FastifyInstance): Promise<void> {
       );
       const handle = body.handle.replace(/^@+/, '');
 
-      // The account whose browser will do the reading. Any connected X account
-      // will do -- this reads a public profile, not anything belonging to that
+      // The account whose browser will do the reading. Any connected account on
+      // a network AI17Z can read will do. This reads a public profile, not anything belonging to that
       // account -- so the first one is as good as a choice the owner would have
       // to make for no reason.
       const owned = await accountsRepo.listAccounts(user.id);
-      const reader = owned.find((a) => a.channel === 'x' && a.enabled) ?? null;
+      const reader = owned.find((a) => canReadAccounts(a.channel) && a.enabled) ?? null;
       if (!reader) {
         throw new BadRequestError(
           'AI17Z reads X through a signed-in browser, so it needs one of your X accounts connected first. ' +

@@ -2,14 +2,28 @@ import { lookup } from 'node:dns/promises';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { BrowserContext, Page } from '@xbam/browser';
+import { listNetworkProfiles } from '@xbam/shared/contracts';
 import { addressVerdict } from '@xbam/upstream';
 
-/** X belongs to the reading layer, including redirects and embedded requests. */
+/**
+ * A social network belongs to the reading layer, including redirects and
+ * embedded requests, so a public screenshot may never be taken of one.
+ *
+ * Which hosts those are is each network's profile and nothing here: the refusal
+ * covers every network the engine knows, so adding one is a profile entry and
+ * not an edit to a security check.
+ */
+function refusedByAnyNetwork(hostname: string): boolean {
+  return listNetworkProfiles().some((profile) =>
+    profile.refusedCaptureHosts.some((host) => hostname === host || hostname.endsWith(`.${host}`)),
+  );
+}
+
 export function screenshotUrlAllowed(raw: string, hosts?: readonly string[]): boolean {
   try {
     const url = new URL(raw);
     return (!hosts || hosts.some(host => host.toLowerCase() === url.hostname)) && url.protocol === 'https:' && !url.username && !url.password &&
-      !/(^|\.)(x\.com|twitter\.com|t\.co)$/.test(url.hostname) &&
+      !refusedByAnyNetwork(url.hostname) &&
       url.hostname !== 'localhost' && !url.hostname.endsWith('.localhost');
   } catch { return false; }
 }

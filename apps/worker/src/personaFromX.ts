@@ -1,6 +1,6 @@
 import { createLogger } from '@xbam/shared';
 import { accounts as accountsRepo, personaSources, relationships as relationshipsRepo } from '@xbam/database';
-import { emptyTimelineDetail, xIntelligence, type XPostRecord, type XUser } from '@xbam/channels';
+import { accountReaderFor, canReadAccounts, emptyTimelineDetail, type XPostRecord, type XUser } from '@xbam/channels';
 import { buildChannelContext } from '@xbam/runtime';
 import { syncPersonaSource } from '@xbam/persona';
 
@@ -76,6 +76,16 @@ export async function collectPersonaFromX(input: {
 }): Promise<PersonaCollection> {
   const target = input.target ?? PERSONA_CORPUS_TARGET;
   const account = await accountsRepo.requireAccount(input.readerAccountId);
+
+  // The reading account's network picks the reader. One nobody has built a
+  // reader for refuses in words and marks the source unavailable, as any other
+  // read that could not happen does.
+  const reader = accountReaderFor(account.channel);
+  if (!reader) {
+    const detail = `AI17Z cannot read ${account.channel} accounts yet, so a voice cannot be learned from @${input.handle.replace(/^@+/, '')}.`;
+    await personaSources.setSourceStatus(input.sourceId, 'UNAVAILABLE', { lastError: detail });
+    return { outcome: 'REFUSED', detail, user: null, collected: 0, stored: 0, traits: 0, backend: 'none' };
+  }
   const channel = await buildChannelContext(account, null);
 
   const say = (progress: string) =>
@@ -83,7 +93,7 @@ export async function collectPersonaFromX(input: {
 
   // ---- who ---------------------------------------------------------------
   say(`Looking for @${input.handle.replace(/^@+/, '')}.`);
-  const resolved = await xIntelligence.resolveUser(input.handle, { channel });
+  const resolved = await reader.resolveUser(input.handle, { channel });
   if (resolved.outcome !== 'OK' || !resolved.data) {
     await personaSources.setSourceStatus(input.sourceId, 'UNAVAILABLE', {
       lastError: resolved.detail || `AI17Z could not find @${input.handle}.`,
@@ -115,11 +125,11 @@ export async function collectPersonaFromX(input: {
   // Nothing else about the relationship is touched. Reading somebody's posts is
   // not an interaction with them, and counting it as one would inflate a number
   // the engagement heuristics read.
-  await noteIdentity(input.sourceId, user).catch(() => undefined);
+  await noteIdentity(input.sourceId, user, account.channel).catch(() => undefined);
 
   // ---- what they wrote ---------------------------------------------------
   say(`Found @${user.handle}. Reading posts.`);
-  const timeline = await xIntelligence.getUserPosts(
+  const timeline = await reader.getUserPosts(
     {
       userId: user.userId,
       handle: user.handle,
@@ -223,14 +233,14 @@ function toCorpusItem(post: XPostRecord) {
  * interaction would make "how well do we know them" partly a function of how
  * often somebody pressed a learn button.
  */
-async function noteIdentity(sourceId: string, user: XUser): Promise<void> {
+async function noteIdentity(sourceId: string, user: XUser, channelId: string): Promise<void> {
   if (!user.userId) return;
   const source = await personaSources.getSource(sourceId);
   if (!source) return;
 
   const existing = await relationshipsRepo.find({
     agentId: source.agentId,
-    channel: 'x',
+    channel: channelId,
     handle: user.handle,
   });
   if (!existing || existing.remoteUserId) return;
@@ -240,13 +250,14 @@ async function noteIdentity(sourceId: string, user: XUser): Promise<void> {
 }
 
 /**
- * An X account of the owner's whose browser can do the reading.
+ * An account of the owner's whose browser can do the reading.
  *
- * Reading X needs a session, and AI17Z reads as somebody. Any connected account
- * will do -- this reads public profiles, not anything belonging to that account
- * -- so the first is as good as a choice nobody has a reason to make.
+ * Reading a network needs a session, and AI17Z reads as somebody. Any connected
+ * account on a network with a reader will do. This reads public profiles, not
+ * anything belonging to that account, so the first is as good as a choice
+ * nobody has a reason to make.
  */
 export async function readerAccountFor(ownerId: string): Promise<string | null> {
   const owned = await accountsRepo.listAccounts(ownerId);
-  return owned.find((a) => a.channel === 'x' && a.enabled)?.id ?? null;
+  return owned.find((a) => canReadAccounts(a.channel) && a.enabled)?.id ?? null;
 }

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Pencil, Sparkles } from 'lucide-react';
-import type { EasySetup, EasyView, PreflightResult } from '@xbam/shared/contracts';
+import { isBrowserNetwork, type EasySetup, type EasyView, type PreflightResult } from '@xbam/shared/contracts';
 import { AvatarEditor } from '@app/components/AvatarEditor';
 import { AccountsSection } from './sections/AccountsSection';
 import { IntelligenceSection } from './sections/IntelligenceSection';
@@ -192,7 +192,7 @@ export function EasyAgentView({ agent, onChanged }: { agent: AgentDetail; onChan
         <VoiceSection index={0} agentId={agent.agent.id} compact />
       </div>
 
-      {account?.channel === 'x' && <BrowserTabsPanel accountId={account.accountId} />}
+      {account && isBrowserNetwork(account.channel) && <BrowserTabsPanel accountId={account.accountId} />}
 
       <RecentActivity agentId={agent.agent.id} handle={account?.handle ?? null} />
 

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { networkHas } from '@xbam/shared/contracts';
 import { accounts, query } from '@xbam/database';
 
 const Reading = z.object({
@@ -21,8 +22,9 @@ export const XCounts = z.object({
 export async function storedHomeXCounts(agentId: string, ownerId: string): Promise<z.infer<typeof XCounts>> {
   const empty = () => ({ value: null, readAt: null });
   const absent = { consented: true, followers: empty(), posts: empty(), likes: empty(), replies: empty(), reposts: empty() };
-  const links = (await accounts.listAgentAccounts(agentId)).filter((a) => a.channel === 'x' && a.enabled && a.accountEnabled);
+  const links = (await accounts.listAgentAccounts(agentId)).filter((a) => networkHas(a.channel, 'studioCounts') && a.enabled && a.accountEnabled);
   if (links.length !== 1) return absent;
+  const channel = links[0]!.channel;
   const account = await accounts.getAccount(links[0]!.accountId);
   if (!account || account.ownerId !== ownerId) return absent;
   const [profile] = account.remoteAccountId ? await query<{ followers: number | null; posts: number | null; observed_at: Date }>(
@@ -43,12 +45,12 @@ export async function storedHomeXCounts(agentId: string, ownerId: string): Promi
     `SELECT p.likes, p.replies, p.reposts, p.observed_at FROM post_analytics p
       JOIN actions a ON a.id=p.action_id AND a.agent_id=p.agent_id AND a.account_id=p.account_id
       JOIN jobs j ON j.id=a.job_id JOIN events e ON e.id=j.event_id
-      WHERE p.agent_id=$1 AND p.account_id=$2 AND p.channel='x'
-        AND a.channel='x' AND a.status='EXECUTED' AND a.dry_run=false AND a.type IN ('POST','REPLY')
+      WHERE p.agent_id=$1 AND p.account_id=$2 AND p.channel=$3
+        AND a.channel=$3 AND a.status='EXECUTED' AND a.dry_run=false AND a.type IN ('POST','REPLY')
         AND a.remote_action_id=p.remote_post_id
         AND COALESCE(e.payload->>'rehearsal','false') <> 'true'
         AND COALESCE(e.payload->>'origin','') <> 'rehearsal'
-      ORDER BY p.observed_at DESC, p.id DESC LIMIT 1`, [agentId, account.id]);
+      ORDER BY p.observed_at DESC, p.id DESC LIMIT 1`, [agentId, account.id, channel]);
   const reading = (value: number | null | undefined, at: Date | undefined) => ({ value: value ?? null, readAt: at ? new Date(at).toISOString() : null });
   return XCounts.parse({ consented: true,
     followers: reading(followerSource?.followers, followerSource?.observed_at), posts: reading(profile?.posts, profile?.observed_at),

@@ -5,7 +5,7 @@ import {
   xAccountObservations,
   type XAccountObservationRow,
 } from '@xbam/database';
-import { xIntelligence, type XPostRecord, type XUser } from '@xbam/channels';
+import { accountReaderFor, type AccountReader, type XPostRecord, type XUser } from '@xbam/channels';
 import { buildChannelContext, readAccount, type ReadPost } from '@xbam/runtime';
 
 const log = createLogger('account-intelligence');
@@ -83,9 +83,26 @@ export async function readXAccount(input: {
   const handle = input.handle.trim().replace(/^@+/, '');
   const target = Math.min(Math.max(input.posts ?? ACCOUNT_READ_POSTS, 0), MAX_ACCOUNT_READ_POSTS);
   const account = await accountsRepo.requireAccount(input.readerAccountId);
+
+  /*
+    Which reader answers is the reading account's network, not a fact about this
+    file. A channel nobody has built a reader for is refused in words, and
+    nothing is recorded: the observation table is a record of what a reader saw,
+    and none looked.
+  */
+  const reader = accountReaderFor(account.channel);
+  if (!reader) {
+    return {
+      outcome: 'UNAVAILABLE',
+      detail: `AI17Z cannot read ${account.channel} accounts yet, so there is nothing to show about @${handle}.`,
+      row: null,
+      postsRead: 0,
+      backend: 'none',
+    };
+  }
   const channel = await buildChannelContext(account, null);
 
-  const resolved = await xIntelligence.resolveUser(handle, {
+  const resolved = await reader.resolveUser(handle, {
     channel,
     // A profile card does not need a follower count read in the last minute,
     // and asking for one would make opening a screen a request to X.
@@ -114,7 +131,7 @@ export async function readXAccount(input: {
   }
 
   const user = resolved.data;
-  const timeline = target > 0 ? await readTheirPosts(channel, user, target) : null;
+  const timeline = target > 0 ? await readTheirPosts(reader, channel, user, target) : null;
   const posts = timeline?.outcome === 'OK' ? timeline.data : [];
   const reading = readAccount(posts.map(toReadPost));
 
@@ -156,7 +173,7 @@ export async function readXAccount(input: {
     observedAt: resolved.provenance.collectedAt,
   });
 
-  if (input.agentId) await noteIdentity(input.agentId, user).catch(() => undefined);
+  if (input.agentId) await noteIdentity(input.agentId, user, account.channel).catch(() => undefined);
 
   log.info('read an X account', {
     handle: user.handle,
@@ -176,14 +193,14 @@ export async function readXAccount(input: {
  * it is not. Reposts are dropped: passing somebody's post on says nothing about
  * what the person who pressed the button writes about.
  */
-async function readTheirPosts(channel: unknown, user: XUser, limit: number) {
+async function readTheirPosts(reader: AccountReader, channel: unknown, user: XUser, limit: number) {
   if (!user.userId) {
     // The rendered-page reader can describe somebody without knowing who they
     // are, and a timeline read needs the id. Reported as a gap rather than
     // guessed at from the handle.
     return null;
   }
-  return xIntelligence.getUserPosts(
+  return reader.getUserPosts(
     { userId: user.userId, handle: user.handle, limit, includeReplies: true, includeReposts: false },
     { channel },
   );
@@ -231,9 +248,9 @@ export function toReadPost(post: XPostRecord): ReadPost {
  * here records one. Counting it would make "how well do we know them" partly a
  * function of how often somebody pressed a button.
  */
-async function noteIdentity(agentId: string, user: XUser): Promise<void> {
+async function noteIdentity(agentId: string, user: XUser, channel: string): Promise<void> {
   if (!user.userId) return;
-  const existing = await relationshipsRepo.find({ agentId, channel: 'x', handle: user.handle });
+  const existing = await relationshipsRepo.find({ agentId, channel, handle: user.handle });
   if (!existing || existing.remoteUserId) return;
   await relationshipsRepo.noteRemoteUserId(existing.id, user.userId, user.displayName);
   log.info('filled in a relationship identity from an account read', { handle: user.handle, userId: user.userId });

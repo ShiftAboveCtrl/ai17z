@@ -1,12 +1,7 @@
-import { PipelineError, envBool, errorMessage, sleep } from '@xbam/shared';
-import {
-  leaseSession,
-  resolveProfileDir,
-  type LeasedSession,
-  type Page,
-  type TabRole,
-} from '@xbam/browser';
+import { PipelineError } from '@xbam/shared';
+import type { Page } from '@xbam/browser';
 import type { ChannelContext } from '../contract';
+import { navigate, readBodyText, settle, withTabSession } from '../browserKit';
 import { SEL } from './selectors';
 import type { ArticleSnapshot } from './conversation';
 import {
@@ -97,61 +92,20 @@ export async function refuseIfXBroke(page: Page, what: string): Promise<void> {
 export const MAX_SCROLL_PASSES = 8;
 
 /**
- * Short randomised pause between UI steps.
+ * The shared half of driving a page, under the names this adapter has always
+ * used. Waiting like a person, leasing a tab and going somewhere are the same on
+ * every network, so they live in the browser kit; what stays here is everything
+ * that knows what an X page is.
  *
- * This exists for reliability, not for evading anything: the X timeline is a
- * virtualised list that re-renders asynchronously, and acting on the frame that
- * was there a moment ago is the single largest source of flaky automation.
+ * `withSession` is the one to read the comment on: ACTION for anything that
+ * changes something on X or verifies where a change will land; MENTIONS and
+ * NOTIFICATIONS for the two discovery surfaces. Reading on one tab can no longer
+ * discard a composer open on another, and a monitor that fails is recorded
+ * against its own tab rather than against the account.
  */
-export async function settle(minMs = 350, maxMs = 900): Promise<void> {
-  await sleep(minMs + Math.random() * (maxMs - minMs));
-}
-
-/**
- * Runs one operation on the tab that belongs to it.
- *
- * ACTION for anything that changes something on X or verifies where a change
- * will land; MENTIONS and NOTIFICATIONS for the two discovery surfaces. Reading
- * on one tab can no longer discard a composer open on another, and a monitor
- * that fails is recorded against its own tab rather than against the account.
- */
-export async function withSession<T>(
-  ctx: ChannelContext,
-  role: TabRole,
-  fn: (session: LeasedSession) => Promise<T>,
-  existingOnly = false,
-): Promise<T> {
-  const session = await leaseSession(
-    {
-      accountId: ctx.account.id,
-      existingOnly,
-      mode: ctx.session?.mode ?? 'MANAGED',
-      profileDir: resolveProfileDir(ctx.account.id, ctx.session?.profileDir),
-      cdpUrl: ctx.session?.cdpUrl ?? null,
-      engine: ctx.session?.engine ?? 'GOOGLE_CHROME',
-      channel: ctx.session?.channel ?? null,
-      headless: envBool('AI17Z_BROWSER_HEADLESS', false),
-    },
-    role,
-  );
-  try {
-    const result = await fn(session);
-    await session.release();
-    return result;
-  } catch (error) {
-    await session.releaseFailed(errorMessage(error));
-    throw error;
-  }
-}
-
-export async function goto(page: Page, url: string): Promise<void> {
-  try {
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-  } catch (error) {
-    throw PipelineError.retryable('navigation_failed', `Could not open ${url}: ${errorMessage(error)}`, { url }, error);
-  }
-  await settle(800, 1_600);
-}
+export { settle };
+export const withSession = withTabSession;
+export const goto = navigate;
 
 export async function isAuthenticated(page: Page): Promise<boolean> {
   const marker = page.locator(SEL.loggedIn).first();
@@ -163,13 +117,7 @@ export async function isAuthenticated(page: Page): Promise<boolean> {
   }
 }
 
-export async function readText(page: Page): Promise<string> {
-  try {
-    return (await page.locator('body').innerText({ timeout: 10_000 })) ?? '';
-  } catch {
-    return '';
-  }
-}
+export const readText = readBodyText;
 
 export function selfHandles(ctx: ChannelContext): string[] {
   const configured = Array.isArray((ctx.account.settings as { selfHandles?: unknown }).selfHandles)

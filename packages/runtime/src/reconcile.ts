@@ -1,5 +1,5 @@
-import type { EventType, NormalizedEvent, RadarCandidate, RadarSourceKind } from '@xbam/shared/contracts';
-import { EVENT_TYPES, X_READ_PACING } from '@xbam/shared/contracts';
+import type { ChannelId, EventType, NormalizedEvent, RadarCandidate, RadarSourceKind } from '@xbam/shared/contracts';
+import { EVENT_TYPES, X_NETWORK_PROFILE, getNetworkProfile } from '@xbam/shared/contracts';
 import { createLogger } from '@xbam/shared';
 import { accounts as accountsRepo, radar as radarRepo } from '@xbam/database';
 import { getChannelAdapter } from '@xbam/channels';
@@ -22,6 +22,11 @@ const log = createLogger('reconcile');
 
 export interface ReconcileInput {
   accountId: string;
+  /**
+   * The channel the candidates were found on. Omitted means X, which is what
+   * every caller was before there was a second browser network.
+   */
+  channel?: ChannelId;
   sourceId: string | null;
   sourceKind: RadarSourceKind;
   candidates: RadarCandidate[];
@@ -75,9 +80,9 @@ function eventType(candidate: RadarCandidate): EventType {
   return 'KEYWORD_MATCH';
 }
 
-function toEvent(candidate: RadarCandidate): NormalizedEvent {
+function toEvent(candidate: RadarCandidate, channel: ChannelId): NormalizedEvent {
   return {
-    channel: 'x',
+    channel,
     type: eventType(candidate),
     // The post's own id. This is the reconciliation key, and it is also the
     // idempotency key the events table already enforces, so two sources
@@ -140,7 +145,7 @@ export async function reconcileCandidates(input: ReconcileInput): Promise<Reconc
       discovery. It simply was not allowed to survive into the event, which is
       the thing every later reader looks at.
     */
-    const event = toEvent(candidate);
+    const event = toEvent(candidate, input.channel ?? X_NETWORK_PROFILE.channel);
     const owned =
       input.sourceKind === 'tracked_account' && event.type === 'KEYWORD_MATCH'
         ? { ...event, type: 'TARGET_ACCOUNT_ACTIVITY' as const }
@@ -205,13 +210,22 @@ export async function reconcileCandidates(input: ReconcileInput): Promise<Reconc
  * instead: the one most likely to catch what notifications dropped runs most
  * often, and the thread walk, which is the slowest and least urgent, runs least.
  */
-export const DEFAULT_X_RADAR: { kind: RadarSourceKind; label: string; intervalSeconds: number }[] = [
-  // The pace comes from the one table that decides it; see X_READ_PACING.
-  { kind: 'notifications', label: 'Notifications', intervalSeconds: X_READ_PACING.notifications.defaultSeconds },
-  { kind: 'mention_search', label: 'Mention search', intervalSeconds: X_READ_PACING.mention_search.defaultSeconds },
-  { kind: 'reply_search', label: 'Reply search', intervalSeconds: X_READ_PACING.reply_search.defaultSeconds },
-  { kind: 'own_threads', label: 'Replies to own posts', intervalSeconds: X_READ_PACING.own_threads.defaultSeconds },
-];
+export const DEFAULT_X_RADAR: readonly { kind: RadarSourceKind; label: string; intervalSeconds: number }[] =
+  // Read from X's profile, whose pace comes from the one table that decides it;
+  // see X_READ_PACING. Kept under this name because the radar screen and the
+  // tests ask for X's presets specifically.
+  X_NETWORK_PROFILE.pacing.defaultRadar;
+
+/**
+ * What a new account on a channel starts watching.
+ *
+ * The network's own profile says. A channel with no profile, or one with no
+ * radar, gets nothing: a mock account must not acquire four sources that can
+ * never poll.
+ */
+export function defaultRadarFor(channel: string): readonly { kind: RadarSourceKind; label: string; intervalSeconds: number }[] {
+  return getNetworkProfile(channel)?.pacing.defaultRadar ?? [];
+}
 
 /**
  * Gives an X account the four monitors, unless it already has an answer.
@@ -245,7 +259,7 @@ export async function ensureDefaultRadarSources(accountId: string): Promise<Rada
   const existing = new Set((await radarRepo.listSources(accountId)).map((source) => source.kind));
 
   const created: RadarSourceKind[] = [];
-  for (const preset of DEFAULT_X_RADAR) {
+  for (const preset of defaultRadarFor(account.channel)) {
     if (!supported.includes(preset.kind)) continue;
     if (existing.has(preset.kind)) continue;
     await radarRepo.upsertSource({

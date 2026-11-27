@@ -21,6 +21,7 @@
  * count bounded. Both are deliberately conservative: a page that might be
  * somebody's sign-in is never claimed and never closed.
  */
+import { X_NETWORK_PROFILE, type NetworkTabPatterns } from '@xbam/shared/contracts';
 import type { TabRole } from './tabs';
 
 export const RECONCILE_ROLES: readonly TabRole[] = ['ACTION', 'MENTIONS', 'NOTIFICATIONS', 'RESEARCH'];
@@ -64,11 +65,17 @@ const PROTECTED =
  * page is whichever status is being replied to and that matches nothing
  * distinctive -- guessing there would claim a stranger's tab.
  */
-const LOOKS_LIKE: Partial<Record<TabRole, RegExp>> = {
-  MENTIONS: /x\.com\/search\?q=|x\.com\/[^/]+\/with_replies/i,
-  NOTIFICATIONS: /x\.com\/notifications/i,
-  RESEARCH: /^https?:\/\/(?!.*x\.com)/i,
-};
+/**
+ * What a network's tabs look like, for the passes that read a page's URL.
+ *
+ * This is the `browser.tabs` block of a network profile, so each network
+ * describes its own pages and this file names none of them. Omitted, the answer
+ * is X's, which is what every caller got before a second network existed and
+ * is read from the X profile rather than restated here.
+ */
+export type TabShapes = NetworkTabPatterns;
+
+const X_TAB_SHAPES: TabShapes = X_NETWORK_PROFILE.browser!.tabs;
 
 /** Whether a page is one this runtime may act on at all. */
 function claimable(page: OpenPage): boolean {
@@ -83,12 +90,13 @@ function claimable(page: OpenPage): boolean {
  * browser and the tab count asserted to stay bounded -- which is the property
  * that was actually broken.
  */
-export function reconcileTabs(pages: OpenPage[]): Reconciliation {
+export function reconcileTabs(pages: OpenPage[], shapes: TabShapes = X_TAB_SHAPES): Reconciliation {
   const adopt: Partial<Record<TabRole, string>> = {};
   const taken = new Set<string>();
+  const roles = shapes.roles;
 
   // 1. The tag, where it survived. Strongest signal and never overridden.
-  for (const role of RECONCILE_ROLES) {
+  for (const role of roles) {
     const tagged = pages.find((p) => p.tag === role && !taken.has(p.id));
     if (tagged) {
       adopt[role] = tagged.id;
@@ -98,9 +106,9 @@ export function reconcileTabs(pages: OpenPage[]): Reconciliation {
 
   // 2. What the page is showing. Only for roles still unclaimed, only for
   //    pages with no tag of their own, and only where the shape is unambiguous.
-  for (const role of RECONCILE_ROLES) {
+  for (const role of roles) {
     if (adopt[role]) continue;
-    const shape = LOOKS_LIKE[role];
+    const shape = shapes.looksLike[role];
     if (!shape) continue;
     const match = pages.find((p) => !taken.has(p.id) && p.tag === null && claimable(p) && shape.test(p.url));
     if (match) {
@@ -112,14 +120,14 @@ export function reconcileTabs(pages: OpenPage[]): Reconciliation {
   // 3. One anonymous page can become the action tab, which is what a freshly
   //    launched Chrome's blank-ish first tab usually is.
   if (!adopt.ACTION) {
-    const spare = pages.find((p) => !taken.has(p.id) && p.tag === null && claimable(p) && /x\.com/i.test(p.url));
+    const spare = pages.find((p) => !taken.has(p.id) && p.tag === null && claimable(p) && shapes.onNetwork.test(p.url));
     if (spare) {
       adopt.ACTION = spare.id;
       taken.add(spare.id);
     }
   }
 
-  const create = RECONCILE_ROLES.filter((role) => !adopt[role]);
+  const create = roles.filter((role) => !adopt[role]);
 
   const close: string[] = [];
   const keep: { id: string; reason: string }[] = [];

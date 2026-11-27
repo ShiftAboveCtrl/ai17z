@@ -1,5 +1,5 @@
 import { createLogger, envInt, errorMessage } from '@xbam/shared';
-import { effectiveXInterval } from '@xbam/shared/contracts';
+import { effectiveReadInterval } from '@xbam/shared/contracts';
 import {
   accounts as accountsRepo,
   actions as actionsRepo,
@@ -170,10 +170,11 @@ export class SocialRadar {
     // the interval was written into the config. It was 180 for all of them, so
     // nobody was noticed in under three minutes however the sources were set up.
     const configured = config.intervalSeconds ?? envInt('AI17Z_RADAR_DEFAULT_INTERVAL_S', 60);
-    // On X, never faster than the platform's floor for this kind of page. An
-    // owner may go slower; going faster is paid for by the account, in
-    // cooldowns. Other channels keep exactly what they were configured with.
-    const interval = (account.channel === 'x' ? effectiveXInterval(source.kind, configured).seconds : configured) * 1_000;
+    // Never faster than the network's floor for this kind of page, where it has
+    // one. An owner may go slower; going faster is paid for by the account, in
+    // cooldowns. A channel with no pacing table keeps exactly what it was
+    // configured with, as every channel but X did before this was a profile.
+    const interval = (effectiveReadInterval(account.channel, source.kind, configured)?.seconds ?? configured) * 1_000;
 
     /*
       The account's X budget, asked before anything is loaded.
@@ -389,6 +390,7 @@ export class SocialRadar {
           : kept;
       const outcome = await reconcileCandidates({
         accountId: source.accountId,
+        channel: account.channel,
         sourceId: source.id,
         sourceKind: source.kind,
         candidates: labelled,

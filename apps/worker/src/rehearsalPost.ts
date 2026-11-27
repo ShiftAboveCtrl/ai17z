@@ -1,6 +1,7 @@
 import { createLogger } from '@xbam/shared';
+import { postIdFromInput, type ChannelId } from '@xbam/shared/contracts';
 import { accounts as accountsRepo } from '@xbam/database';
-import { xIntelligence, type XPostRecord } from '@xbam/channels';
+import { accountReaderFor, type XPostRecord } from '@xbam/channels';
 import { buildChannelContext, rehearse, type RehearsalSubject } from '@xbam/runtime';
 
 const log = createLogger('rehearsal-post');
@@ -29,14 +30,6 @@ const log = createLogger('rehearsal-post');
  * what it is given here.
  */
 
-/** A status id, from a link or typed on its own. */
-export function postIdFrom(input: string): string | null {
-  const text = input.trim();
-  if (/^\d{5,25}$/.test(text)) return text;
-  const match = text.match(/\/status(?:es)?\/(\d{5,25})/);
-  return match?.[1] ?? null;
-}
-
 export interface RehearsalReadResult {
   outcome: string;
   detail: string;
@@ -47,9 +40,9 @@ export interface RehearsalReadResult {
   subject: RehearsalSubject | null;
 }
 
-function subjectFrom(post: XPostRecord, parent: XPostRecord | null, gaps: string[]): RehearsalSubject {
+function subjectFrom(channel: ChannelId, post: XPostRecord, parent: XPostRecord | null, gaps: string[]): RehearsalSubject {
   return {
-    channel: 'x',
+    channel,
     remoteId: post.postId,
     url: post.url ?? null,
     authorHandle: post.authorHandle ?? 'someone',
@@ -82,7 +75,24 @@ export async function rehearseAgainstPost(input: {
   requestedBy: string | null;
   as?: 'MENTION' | 'KEYWORD_MATCH' | 'TARGET_ACCOUNT_ACTIVITY';
 }): Promise<RehearsalReadResult> {
-  const postId = postIdFrom(input.postRef);
+  const account = await accountsRepo.requireAccount(input.readerAccountId);
+
+  // The reading account's network decides how a link is read and who reads it.
+  // A channel nobody has built a post reader for is refused in words, with
+  // nothing queued, rather than falling through to a reader for another site.
+  const reader = accountReaderFor(account.channel);
+  if (!reader) {
+    return {
+      outcome: 'UNAVAILABLE',
+      detail: `AI17Z cannot read posts on ${account.channel} yet, so there is nothing to rehearse against.`,
+      jobId: null,
+      backend: 'none',
+      gaps: [],
+      subject: null,
+    };
+  }
+
+  const postId = postIdFromInput(account.channel, input.postRef);
   if (!postId) {
     return {
       outcome: 'NOT_FOUND',
@@ -94,7 +104,6 @@ export async function rehearseAgainstPost(input: {
     };
   }
 
-  const account = await accountsRepo.requireAccount(input.readerAccountId);
   const channel = await buildChannelContext(account, null);
 
   /*
@@ -105,7 +114,7 @@ export async function rehearseAgainstPost(input: {
     something read this morning would rehearse against a conversation that has
     since moved on.
   */
-  const read = await xIntelligence.getPost(postId, { channel, freshness: 'LIVE' });
+  const read = await reader.getPost(postId, { channel, freshness: 'LIVE' });
   if (read.outcome !== 'OK' || !read.data) {
     return {
       outcome: read.outcome,
@@ -124,7 +133,7 @@ export async function rehearseAgainstPost(input: {
   // a stop: a rehearsal against a root post has no ancestor and that is normal.
   let parent: XPostRecord | null = null;
   if (post.replyToPostId) {
-    const thread = await xIntelligence.getThread(post.postId, { channel, freshness: 'LIVE' });
+    const thread = await reader.getThread(post.postId, { channel, freshness: 'LIVE' });
     if (thread.outcome === 'OK') {
       parent = thread.data.find((row) => row.postId === post.replyToPostId) ?? null;
       gaps.push(...thread.provenance.gaps);
@@ -135,7 +144,7 @@ export async function rehearseAgainstPost(input: {
   }
 
   const subject = {
-    ...subjectFrom(post, parent, gaps),
+    ...subjectFrom(account.channel, post, parent, gaps),
     as: input.as ?? 'MENTION',
     authorFollowers: post.authorFollowers ?? null,
     metrics: post.metrics

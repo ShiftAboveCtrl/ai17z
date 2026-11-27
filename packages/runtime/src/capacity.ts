@@ -1,4 +1,4 @@
-import type { CapacityClass, RadarSourceKind } from '@xbam/shared/contracts';
+import { networkHas, type CapacityClass, type RadarSourceKind } from '@xbam/shared/contracts';
 import { createLogger, errorMessage } from '@xbam/shared';
 import {
   accounts as accountsRepo,
@@ -34,9 +34,13 @@ const log = createLogger('capacity');
  * API calls, and the cheaper unit does not make a runaway poll any less of one:
  * a second network must not be a way around the first one's discipline. The
  * names say X because X was first; the account row is what they mean.
+ *
+ * Which channels pay is each network's profile, so a new network opts in by
+ * saying so there and no list here has to be remembered. A channel with no
+ * profile reads free, as the mock channel always did.
  */
 export function spendsReadBudget(channel: string): boolean {
-  return channel === 'x' || channel === 'bluesky';
+  return networkHas(channel, 'spendsReadBudget');
 }
 
 /** Which class of capacity a radar source spends. */

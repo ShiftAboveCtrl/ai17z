@@ -1,4 +1,4 @@
-import { describeSignIn, type Blocker } from '@xbam/shared/contracts';
+import { describeSignIn, isBrowserNetwork, type Blocker } from '@xbam/shared/contracts';
 import { noBrowserWorker, noWorkerRunning } from '@xbam/shared';
 import {
   accountCredentials,
@@ -87,7 +87,7 @@ export async function startPreflight(agentId: string): Promise<Blocker[]> {
   for (const link of enabledLinks) {
     const account = await accountsRepo.getAccount(link.accountId);
     if (!account) continue;
-    if (account.channel === 'x') needsBrowser = true;
+    if (isBrowserNetwork(account.channel)) needsBrowser = true;
 
     // Browser sessions, bot tokens and app signers all require a connection.
     const signsIn = getChannelAdapter(account.channel).requiresBrowser || ['telegram', 'farcaster'].includes(account.channel);

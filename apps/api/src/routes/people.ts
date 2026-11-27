@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { BadRequestError, ForbiddenError, NotFoundError } from '@xbam/shared';
+import { X_NETWORK_PROFILE } from '@xbam/shared/contracts';
+import { canReadAccounts } from '@xbam/channels';
 import { bridgesFor } from '@xbam/runtime';
 import {
   accounts as accountsRepo,
@@ -51,6 +53,15 @@ async function ownedAgent(agentId: string, user: UserRow) {
 async function linkedAccount(agentId: string) {
   const links = await accountsRepo.listAgentAccounts(agentId);
   return links[0]?.accountId ?? null;
+}
+
+/**
+ * The channel the agent's relationships are kept under: its linked account's.
+ * With no link the answer is X's, which is what this screen always asked.
+ */
+async function linkedChannel(agentId: string) {
+  const links = await accountsRepo.listAgentAccounts(agentId);
+  return links[0]?.channel ?? X_NETWORK_PROFILE.channel;
 }
 
 const Handle = z
@@ -178,7 +189,7 @@ export async function peopleRoutes(app: FastifyInstance): Promise<void> {
       const accountId = await linkedAccount(agent.id);
 
       const [relationship, observed, said] = await Promise.all([
-        relationshipsRepo.find({ agentId: agent.id, channel: 'x', handle }),
+        relationshipsRepo.find({ agentId: agent.id, channel: await linkedChannel(agent.id), handle }),
         xAccountObservations.find({ ownerUserId: user.id, handle }),
         // Out of the inbox read model rather than a query of its own: it
         // already knows whether a mention produced a reply, and a second
@@ -267,7 +278,7 @@ export async function peopleRoutes(app: FastifyInstance): Promise<void> {
         .parse(request.body ?? {});
 
       const owned = await accountsRepo.listAccounts(user.id);
-      const reader = owned.find((a) => a.channel === 'x' && a.enabled) ?? null;
+      const reader = owned.find((a) => canReadAccounts(a.channel) && a.enabled) ?? null;
       if (!reader) {
         throw new BadRequestError(
           'AI17Z reads X through a signed-in browser, so it needs one of your X accounts connected first. ' +

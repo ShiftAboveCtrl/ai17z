@@ -1,5 +1,6 @@
 import { createLogger } from '@xbam/shared';
 import type { ChannelContext } from '../../contract';
+import { fetchJsonInPage, type InPageJsonRequest } from '../../browserKit';
 import { goto, settle, withSession, type Page } from '../page';
 import {
   DEFAULT_BUDGET,
@@ -393,51 +394,30 @@ async function askGraphql(
   variables: Record<string, unknown>,
   features: Record<string, boolean>,
 ): Promise<GraphqlAnswer> {
-  return page.evaluate(
-    async ({ queryId, operation, variables, features }) => {
-      const url =
-        `https://x.com/i/api/graphql/${queryId}/${operation}` +
-        `?variables=${encodeURIComponent(JSON.stringify(variables))}` +
-        `&features=${encodeURIComponent(JSON.stringify(features))}`;
+  // The request itself is the browser kit's: it goes out from the signed-in page
+  // as the page's own, and the CSRF token is read from its cookie in the page
+  // and never comes back. What is X's is the address and the headers.
+  const url =
+    `https://x.com/i/api/graphql/${queryId}/${operation}` +
+    `?variables=${encodeURIComponent(JSON.stringify(variables))}` +
+    `&features=${encodeURIComponent(JSON.stringify(features))}`;
 
-      // The app's own public bearer, as shipped in its bundle. Read here and
-      // used here; it does not leave the page.
-      const bearer =
-        'Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA';
-      const csrf = (document.cookie.match(/(?:^|;\s*)ct0=([^;]+)/) ?? [])[1] ?? '';
-
-      try {
-        const response = await fetch(url, {
-          method: 'GET',
-          credentials: 'include',
-          headers: {
-            authorization: bearer,
-            'x-csrf-token': csrf,
-            'x-twitter-active-user': 'yes',
-            'x-twitter-auth-type': 'OAuth2Session',
-            'content-type': 'application/json',
-          },
-        });
-        const text = await response.text();
-        let json: unknown = null;
-        try {
-          json = JSON.parse(text);
-        } catch {
-          json = null;
-        }
-        const errors = (json as { errors?: { message?: string }[] } | null)?.errors;
-        return {
-          ok: response.ok && !errors?.length,
-          status: response.status,
-          error: errors?.[0]?.message ?? (response.ok ? null : text.slice(0, 200)),
-          json,
-        };
-      } catch (error) {
-        return { ok: false, status: 0, error: String((error as Error).message ?? error).slice(0, 200), json: null };
-      }
+  const request: InPageJsonRequest = {
+    url,
+    headers: {
+      // The app's own public bearer, as shipped in its bundle.
+      authorization:
+        'Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA',
+      'x-twitter-active-user': 'yes',
+      'x-twitter-auth-type': 'OAuth2Session',
+      'content-type': 'application/json',
     },
-    { queryId, operation, variables, features },
-  );
+    cookieHeaders: [{ header: 'x-csrf-token', cookie: 'ct0' }],
+  };
+  // What comes back is the answer and nothing else: the kit's answer type has
+  // no field a credential could travel in.
+  const answer: GraphqlAnswer = await fetchJsonInPage(page, request);
+  return answer;
 }
 
 /** The feature flags X's own requests carry. Wrong ones are refused outright. */
